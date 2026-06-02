@@ -20,7 +20,7 @@ builder.Services.AddSignalR(options =>
 });
 
 // 4. Đăng ký Controllers
-builder.Services.AddControllers();
+builder.Services.AddControllersWithViews();
 
 // 5. Cấu hình CORS để Frontend (Vite chạy cổng 5173 hoặc 3000) có thể gọi API & SignalR
 builder.Services.AddCors(options =>
@@ -47,6 +47,9 @@ app.UseHttpsRedirection();
 // Sử dụng CORS
 app.UseCors("CorsPolicy");
 
+// Phục vụ file tĩnh trong wwwroot
+app.UseStaticFiles();
+
 app.UseAuthorization();
 
 // Route cho Web API
@@ -56,6 +59,8 @@ app.MapControllers();
 app.MapHub<GameHub>("/gamehub");
 
 // Route mặc định (Fallback)
-app.MapGet("/", () => "Draw with me Server API is running...");
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
 
 app.Run();

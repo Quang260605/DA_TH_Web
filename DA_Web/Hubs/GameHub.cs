@@ -19,6 +19,11 @@ namespace DA_Web.Hubs
         private static readonly ConcurrentDictionary<string, int> ConnectionToUser = new();
         private static readonly ConcurrentDictionary<int, string> UserToConnection = new();
 
+        public static string? GetConnectionId(int userId)
+        {
+            return UserToConnection.TryGetValue(userId, out var connId) ? connId : null;
+        }
+
         public GameHub(ApplicationDbContext context)
         {
             _context = context;
@@ -65,6 +70,23 @@ namespace DA_Web.Hubs
                     {
                         await Clients.Client(connId).SendAsync("BanBeOffline", userId);
                     }
+                }
+
+                // Xử lý nếu người chơi mất kết nối khi đang chơi game (DangChoi)
+                var activePlayer = await _context.NguoiChoiTrongPhongs
+                    .Include(rp => rp.PhongCho)
+                    .FirstOrDefaultAsync(rp => rp.NguoiDungId == userId && rp.PhongCho!.TrangThai == "DangChoi");
+
+                if (activePlayer != null)
+                {
+                    var room = activePlayer.PhongCho!;
+                    room.TrangThai = "DaKetThuc";
+                    _context.Entry(room).State = EntityState.Modified;
+                    _context.NguoiChoiTrongPhongs.Remove(activePlayer);
+                    await _context.SaveChangesAsync();
+
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Room_{room.MaPhong}");
+                    await Clients.Group($"Room_{room.MaPhong}").SendAsync("GameBiHuyDocDuong", userId, "Người chơi mất kết nối, game đã bị hủy.");
                 }
 
                 // Xử lý tự động thoát phòng nếu đang ở trong phòng chờ nào đó
@@ -285,6 +307,70 @@ namespace DA_Web.Hubs
             }
         }
 
+        // Chủ phòng mở phòng rộng rãi ra cộng đồng (đổi LoaiPhong sang GhepNgauNhien)
+        public async Task MoPhongCongDong(string maPhong)
+        {
+            var room = await _context.PhongChos
+                .FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai == "DangCho");
+
+            if (room == null)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Phòng không tồn tại hoặc đã bắt đầu chơi.");
+                return;
+            }
+
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId))
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Không tìm thấy phiên người dùng.");
+                return;
+            }
+
+            if (room.ChuPhongId != userId)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Chỉ chủ phòng mới có quyền mở rộng phòng ra cộng đồng.");
+                return;
+            }
+
+            room.LoaiPhong = "GhepNgauNhien";
+            room.SoNguoiToiDa = 8;
+            _context.Entry(room).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            await Clients.Group($"Room_{maPhong}").SendAsync("PhongDaMoCongDong", room.SoNguoiToiDa);
+
+            var danhSachNguoiChoi = await _context.NguoiChoiTrongPhongs
+                .Where(rp => rp.PhongChoId == room.Id)
+                .Include(rp => rp.NguoiDung)
+                .Select(rp => new
+                {
+                    userId = rp.NguoiDungId,
+                    tenHienThi = rp.NguoiDung!.TenHienThi,
+                    anhDaiDienUrl = rp.NguoiDung.AnhDaiDienUrl,
+                    sanSang = rp.SanSang
+                })
+                .ToListAsync();
+
+            await Clients.Group($"Room_{maPhong}").SendAsync("CapNhatPhong", maPhong, danhSachNguoiChoi);
+        }
+
+        // Mời bạn bè vào phòng game (chuột phải bạn bè -> Mời bạn)
+        public async Task MoiBanVaoPhong(int nguoiMoiId, int nguoiDuocMoiId, string maPhong)
+        {
+            if (UserToConnection.TryGetValue(nguoiDuocMoiId, out string? connId))
+            {
+                var nguoiMoi = await _context.NguoiDungs.FindAsync(nguoiMoiId);
+                if (nguoiMoi != null)
+                {
+                    await Clients.Client(connId).SendAsync("NhanLoiMoiVaoPhong", new
+                    {
+                        nguoiMoiId = nguoiMoiId,
+                        tenNguoiMoi = nguoiMoi.TenHienThi,
+                        maPhong = maPhong
+                    });
+                }
+            }
+        }
+
         // ======================= MODULE 5: TRÒ CHƠI TAM SAO THẤT BẢN (GARTIC PHONE) =======================
 
         // Bắt đầu game (Chỉ chủ phòng gọi được)
@@ -408,21 +494,16 @@ namespace DA_Web.Hubs
             // Trong Gartic Phone, ở Vòng R, mỗi người chơi sẽ làm 1 lượt trên 1 Vòng chơi khác nhau (luân chuyển vòng)
             // Ví dụ: Người 1 làm Vòng 1, Người 2 làm Vòng 2 ở Round 1. Ở Round 2, Người 1 làm Vòng 2, Người 2 làm Vòng 1.
             // Vậy tổng số lượt nộp của cả phòng ở Round R phải bằng số lượng người chơi
-            var totalSubmitsForCurrentRound = await _context.LuotChoiGames
-                .CountAsync(l => allRounds.Select(v => v.Id).Contains(l.VongChoiGameId) && l.NgayNop >= phienChoi.NgayBatDau); // Thực tế chỉ cần group theo RoundIndex/VongHienTai
-
-            // Để đơn giản hóa logic luân chuyển ở đồ án, chúng ta đếm số lượng lượt đã nộp trong Vòng hiện tại
-            var submittedPlayersCount = await _context.LuotChoiGames
-                .Where(l => allRounds.Select(v => v.Id).Contains(l.VongChoiGameId))
-                .GroupBy(l => l.NguoiChoiId)
-                .CountAsync(); // Số người đã nộp ít nhất 1 lượt ở vòng này
+            // Tính số lượng lượt đã nộp trong suốt phiên chơi từ lúc bắt đầu
+            var totalSubmits = await _context.LuotChoiGames
+                .CountAsync(l => allRounds.Select(v => v.Id).Contains(l.VongChoiGameId) && l.NgayNop >= phienChoi.NgayBatDau);
 
             // Lấy danh sách mã phòng để phát sóng
             var roomObj = await _context.PhongChos.FindAsync(phienChoi.PhongChoId);
             if (roomObj == null) return;
 
             // Nếu tất cả người chơi đã nộp lượt của vòng hiện tại
-            if (submittedPlayersCount >= roomPlayers.Count)
+            if (totalSubmits >= phienChoi.VongHienTai * roomPlayers.Count)
             {
                 // Kiểm tra xem đã kết thúc game chưa (đạt số vòng tối đa)
                 if (phienChoi.VongHienTai >= phienChoi.TongSoVong)
@@ -504,7 +585,7 @@ namespace DA_Web.Hubs
             {
                 code = new string(Enumerable.Repeat(chars, 5)
                     .Select(s => s[random.Next(s.Length)]).ToArray());
-            } while (_context.PhongChos.Any(p => p.MaPhong == code && p.TrangThai == "DangCho"));
+            } while (_context.PhongChos.Any(p => p.MaPhong == code && p.TrangThai != "DaKetThuc"));
 
             return code;
         }

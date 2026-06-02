@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using DA_Web.Models;
 using DA_Web.Models.NguoiDungModule;
+using Microsoft.AspNetCore.SignalR;
+using DA_Web.Hubs;
 
 namespace DA_Web.Controllers
 {
@@ -14,10 +16,12 @@ namespace DA_Web.Controllers
     public class SocialController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly IHubContext<GameHub> _hubContext;
 
-        public SocialController(ApplicationDbContext context)
+        public SocialController(ApplicationDbContext context, IHubContext<GameHub> hubContext)
         {
             _context = context;
+            _hubContext = hubContext;
         }
 
         // Gửi lời mời kết bạn hoặc đồng ý kết bạn
@@ -47,6 +51,19 @@ namespace DA_Web.Controllers
                 };
                 _context.KetBans.Add(friendship);
                 await _context.SaveChangesAsync();
+
+                // Gửi thông báo real-time cho đối phương
+                var sender = await _context.NguoiDungs.FindAsync(dto.NguoiDungId1);
+                var receiverConnId = GameHub.GetConnectionId(dto.NguoiDungId2);
+                if (receiverConnId != null && sender != null)
+                {
+                    await _hubContext.Clients.Client(receiverConnId).SendAsync("NhanYeuCauKetBan", new
+                    {
+                        senderId = sender.Id,
+                        senderName = sender.TenHienThi
+                    });
+                }
+
                 return Ok(new { message = "Đã gửi lời mời kết bạn!", status = "ChoKhaiBao" });
             }
             else
@@ -60,6 +77,20 @@ namespace DA_Web.Controllers
                         friendship.TrangThai = "DaKetBan";
                         _context.Entry(friendship).State = EntityState.Modified;
                         await _context.SaveChangesAsync();
+
+                        // Gửi thông báo cho người gửi ban đầu biết đã đồng ý
+                        var requesterConnId = GameHub.GetConnectionId(friendship.NguoiDungId1);
+                        var accepterConnId = GameHub.GetConnectionId(friendship.NguoiDungId2);
+                        if (requesterConnId != null)
+                        {
+                            await _hubContext.Clients.Client(requesterConnId).SendAsync("XacNhanDongYKetBan", friendship.NguoiDungId2);
+                            if (accepterConnId != null)
+                            {
+                                await _hubContext.Clients.Client(requesterConnId).SendAsync("BanBeOnline", friendship.NguoiDungId2);
+                                await _hubContext.Clients.Client(accepterConnId).SendAsync("BanBeOnline", friendship.NguoiDungId1);
+                            }
+                        }
+
                         return Ok(new { message = "Hai bạn đã trở thành bạn bè của nhau!", status = "DaKetBan" });
                     }
                     else
@@ -212,6 +243,54 @@ namespace DA_Web.Controllers
                 .ToListAsync();
 
             return Ok(users);
+        }
+
+        // Lấy danh sách các phòng chờ đang mở (loại phòng là VeCungBan và trạng thái là DangCho)
+        [HttpGet("active-rooms")]
+        public async Task<IActionResult> GetActiveRooms()
+        {
+            var activeRooms = await _context.PhongChos
+                .Where(p => p.LoaiPhong == "VeCungBan" && p.TrangThai == "DangCho")
+                .Include(p => p.ChuPhong)
+                .Select(p => new
+                {
+                    id = p.Id,
+                    maPhong = p.MaPhong,
+                    chuPhongId = p.ChuPhongId,
+                    chuPhongTen = p.ChuPhong != null ? p.ChuPhong.TenHienThi : "Chủ phòng",
+                    soNguoiHienTai = _context.NguoiChoiTrongPhongs.Count(rp => rp.PhongChoId == p.Id),
+                    soNguoiToiDa = p.SoNguoiToiDa
+                })
+                .ToListAsync();
+
+            return Ok(activeRooms);
+        }
+
+        // Hủy kết bạn (xoá bạn)
+        [HttpDelete("remove-friend")]
+        public async Task<IActionResult> RemoveFriend([FromBody] AddFriendDto dto)
+        {
+            var friendship = await _context.KetBans
+                .FirstOrDefaultAsync(f => 
+                    (f.NguoiDungId1 == dto.NguoiDungId1 && f.NguoiDungId2 == dto.NguoiDungId2) ||
+                    (f.NguoiDungId1 == dto.NguoiDungId2 && f.NguoiDungId2 == dto.NguoiDungId1));
+
+            if (friendship == null)
+            {
+                return NotFound(new { message = "Không tìm thấy mối quan hệ bạn bè này!" });
+            }
+
+            _context.KetBans.Remove(friendship);
+            await _context.SaveChangesAsync();
+
+            // Gửi tín hiệu thông báo cho người kia biết đã bị hủy kết bạn để cập nhật UI
+            var receiverConnId = GameHub.GetConnectionId(dto.NguoiDungId2);
+            if (receiverConnId != null)
+            {
+                await _hubContext.Clients.Client(receiverConnId).SendAsync("BiXoaBan", dto.NguoiDungId1);
+            }
+
+            return Ok(new { message = "Đã hủy kết bạn thành công!" });
         }
     }
 

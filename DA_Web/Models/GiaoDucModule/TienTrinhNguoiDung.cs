@@ -33,7 +33,6 @@ namespace DA_Web.Models.GiaoDucModule
 
         public DateTime? NgayHoanThanh { get; set; }
 
-        [StringLength(255)]
         public string? AnhVeNguoiDungUrl { get; set; }
 
         public int? DiemAiCham { get; set; }

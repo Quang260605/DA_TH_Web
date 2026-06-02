@@ -1,8 +1,426 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+@{
+    Layout = null;
 }
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Draw with Me - Khu Vui Chơi & Bạn Bè</title>
+    <!-- Google Fonts Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <!-- Core site styling -->
+    <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+    <!-- Background Gradient Circles -->
+    <div class="bg-circles">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2"></div>
+        <div class="circle circle-3"></div>
+    </div>
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
-</div>
+    <!-- MAIN APP WRAPPER -->
+    <div id="app" class="app-container">
+
+        <!-- 1. LOGIN SCREEN -->
+        <div id="login-screen" class="glass-panel login-card active">
+            <div class="login-header">
+                <div class="logo">
+                    <i class="fa-solid fa-palette paint-logo-icon"></i>
+                    <span>Draw With Me</span>
+                </div>
+                <h2>Chào mừng họa sĩ nhí!</h2>
+                <p>Hãy chọn tài khoản thử nghiệm nhanh hoặc tạo mới để trải nghiệm thế giới vẽ tranh real-time cùng bạn bè.</p>
+            </div>
+
+            <!-- Quick Accounts Grid -->
+            <div class="quick-accounts">
+                <h4>ĐĂNG NHẬP NHANH THỬ NGHIỆM</h4>
+                <div class="accounts-grid">
+                    <button class="btn-quick-acc" onclick="quickLogin('artist1', 'Mèo Con Vui Vẻ', '/assets/avatars/avatar1.png')">
+                        <img src="https://api.dicebear.com/7.x/bottts/svg?seed=artist1" alt="avatar" />
+                        <div class="info">
+                            <span class="name">Mèo Con Vui Vẻ</span>
+                            <span class="uname">@@artist1</span>
+                        </div>
+                        <i class="fa-solid fa-angle-right icon-arrow"></i>
+                    </button>
+                    <button class="btn-quick-acc" onclick="quickLogin('artist2', 'Thỏ Trắng Tinh Nghịch', '/assets/avatars/avatar2.png')">
+                        <img src="https://api.dicebear.com/7.x/bottts/svg?seed=artist2" alt="avatar" />
+                        <div class="info">
+                            <span class="name">Thỏ Trắng Tinh Nghịch</span>
+                            <span class="uname">@@artist2</span>
+                        </div>
+                        <i class="fa-solid fa-angle-right icon-arrow"></i>
+                    </button>
+                    <button class="btn-quick-acc" onclick="quickLogin('artist3', 'Khỉ Con Thông Thái', '/assets/avatars/avatar3.png')">
+                        <img src="https://api.dicebear.com/7.x/bottts/svg?seed=artist3" alt="avatar" />
+                        <div class="info">
+                            <span class="name">Khỉ Con Thông Thái</span>
+                            <span class="uname">@@artist3</span>
+                        </div>
+                        <i class="fa-solid fa-angle-right icon-arrow"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Custom Form Divider -->
+            <div class="form-divider">
+                <span>Hoặc nhập tài khoản tùy ý</span>
+            </div>
+
+            <!-- Custom User Forms -->
+            <div class="login-forms">
+                <div class="input-group">
+                    <i class="fa-solid fa-user"></i>
+                    <input type="text" id="custom-username" placeholder="Tên đăng nhập (ví dụ: gartic_master)..." />
+                </div>
+                <div class="input-group">
+                    <i class="fa-solid fa-signature"></i>
+                    <input type="text" id="custom-display-name" placeholder="Tên hiển thị (ví dụ: Bé Vẽ Đẹp)..." />
+                </div>
+                <button class="btn-primary w-100" onclick="customRegisterAndLogin()">
+                    <i class="fa-solid fa-arrow-right-to-bracket"></i> Đăng nhập / Đăng ký mới
+                </button>
+            </div>
+        </div>
+
+        <!-- 2. MAIN DASHBOARD SCREEN (HIDDEN BY DEFAULT) -->
+        <div id="dashboard-screen" class="dashboard-layout">
+            
+            <!-- A. MAIN GAME SECTION (LEFT/MIDDLE) -->
+            <div class="main-content-panel">
+                
+                <!-- Header Status Bar -->
+                <header class="glass-header">
+                    <div class="user-profile-badge">
+                        <img id="user-avatar" src="https://api.dicebear.com/7.x/bottts/svg?seed=default" alt="avatar" />
+                        <div class="user-meta">
+                            <h3 id="user-display-name">Tên người dùng</h3>
+                            <div class="stats">
+                                <span class="cap-do"><i class="fa-solid fa-star text-warning"></i> Cấp <span id="user-level">1</span></span>
+                                <span class="divider">|</span>
+                                <span class="tong-diem"><i class="fa-solid fa-trophy text-amber"></i> <span id="user-score">0</span> điểm</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="header-actions">
+                        <button class="btn-danger-outline" onclick="logout()">
+                            <i class="fa-solid fa-arrow-right-from-bracket"></i> Đăng xuất
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Dynamic Content Container -->
+                <div class="dynamic-panel">
+                    
+                    <!-- LOBBY SELECTION VIEW -->
+                    <div id="lobby-selector-view" class="view-panel active">
+                        <div class="section-title-bar">
+                            <div class="text">
+                                <h2><i class="fa-solid fa-gamepad text-primary"></i> Sảnh Trò Chơi</h2>
+                                <p>Tạo phòng riêng chơi cùng bạn bè hoặc ghép trận nhanh với mọi người trên thế giới.</p>
+                            </div>
+                            <button class="btn-success shadow-neon" onclick="startRandomMatchmaking()">
+                                <i class="fa-solid fa-shuffle"></i> Ghép trận ngẫu nhiên
+                            </button>
+                        </div>
+
+                        <!-- Matchmaking Overlay Status (Hidden initially) -->
+                        <div id="matchmaking-overlay" class="glass-panel matchmaking-spinner">
+                            <div class="spinner"></div>
+                            <h4>Đang ghép trận ngẫu nhiên...</h4>
+                            <p>Đang tìm kiếm phòng trống hoặc chuẩn bị tạo phòng mới cho bạn.</p>
+                            <button class="btn-danger-outline btn-sm mt-3" onclick="cancelMatchmaking()">Hủy ghép</button>
+                        </div>
+
+                        <div class="lobby-grid">
+                            
+                            <!-- Available Rooms List (Khung to hiển thị phòng đang có sẵn) -->
+                            <div class="rooms-panel glass-panel">
+                                <div class="panel-header">
+                                    <h3><i class="fa-solid fa-list-ul text-primary"></i> Phòng Đang Có Sẵn</h3>
+                                    <button class="btn-refresh" onclick="loadActiveRooms()"><i class="fa-solid fa-arrows-rotate"></i> Làm mới</button>
+                                </div>
+                                
+                                <div id="rooms-list" class="rooms-list-container">
+                                    <!-- Dynamic rooms will be rendered here -->
+                                    <div class="no-rooms">
+                                        <i class="fa-regular fa-folder-open"></i>
+                                        <p>Hiện không có phòng vẽ cùng bạn bè nào đang hoạt động.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Actions Panel (Tạo phòng & Join phòng) -->
+                            <div class="actions-panel glass-panel">
+                                <h3><i class="fa-solid fa-gear text-primary"></i> Quản Lý Phòng Chơi</h3>
+                                
+                                <div class="action-card">
+                                    <div class="card-icon"><i class="fa-solid fa-plus"></i></div>
+                                    <div class="card-body">
+                                        <h4>Tạo phòng chơi mới</h4>
+                                        <p>Tạo phòng chờ riêng tư. Bạn có thể mời bạn bè từ danh mục bên phải hoặc mở công cộng sau đó.</p>
+                                        <button class="btn-primary w-100" onclick="createNewFriendRoom()">
+                                            <i class="fa-solid fa-users-rectangle"></i> Tạo phòng vẽ với bạn
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="action-card mt-4">
+                                    <div class="card-icon"><i class="fa-solid fa-key"></i></div>
+                                    <div class="card-body">
+                                        <h4>Vào phòng bằng mã code</h4>
+                                        <p>Nhập mã gồm 5 ký tự viết hoa từ chủ phòng gửi cho bạn.</p>
+                                        <div class="join-room-input-container">
+                                            <input type="text" id="room-code-input" placeholder="Ví dụ: A8FD5..." maxlength="5" />
+                                            <button class="btn-success" onclick="joinRoomByInputCode()">
+                                                <i class="fa-solid fa-right-to-bracket"></i> Vào phòng
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- ROOM LOBBY DETAIL VIEW -->
+                    <div id="room-lobby-view" class="view-panel">
+                        <div class="room-lobby-header glass-panel">
+                            <div class="room-info">
+                                <span class="room-badge">PHÒNG CHỜ</span>
+                                <h2 id="lobby-title">Phòng chơi của bạn</h2>
+                                <div class="room-meta">
+                                    <span class="meta-item"><i class="fa-solid fa-ticket text-primary"></i> Mã phòng: <strong id="lobby-room-code" class="text-neon-cyan">ABCDE</strong> <button class="btn-copy-code" onclick="copyRoomCode()" title="Sao chép mã"><i class="fa-solid fa-copy"></i></button></span>
+                                    <span class="meta-item"><i class="fa-solid fa-user-group text-primary"></i> Số người: <span id="lobby-player-count">1/8</span></span>
+                                    <span class="meta-item"><i class="fa-solid fa-earth-asia text-primary"></i> Chế độ: <span id="lobby-type-text" class="text-warning">Vẽ cùng bạn</span></span>
+                                </div>
+                            </div>
+                            
+                            <div class="room-action-buttons">
+                                <!-- Nút "Word" mở công khai cho chủ phòng -->
+                                <button id="btn-open-world" class="btn-warning shadow-neon-amber" onclick="openRoomToWorld()">
+                                    <i class="fa-solid fa-earth-americas"></i> Mở Word (Công khai)
+                                </button>
+                                <button id="btn-start-game" class="btn-success shadow-neon" onclick="startGameSession()" style="display: none;">
+                                    <i class="fa-solid fa-play"></i> Bắt đầu chơi
+                                </button>
+                                <button id="btn-ready-toggle" class="btn-primary" onclick="toggleReadyState()">
+                                    <i class="fa-solid fa-check"></i> Sẵn sàng
+                                </button>
+                                <button class="btn-danger-outline" onclick="leaveRoomLobby()">
+                                    <i class="fa-solid fa-arrow-left"></i> Thoát phòng
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Players Grid in Lobby -->
+                        <div class="players-lobby-grid mt-4">
+                            <div class="players-container glass-panel">
+                                <div class="panel-header border-bottom pb-2 mb-3">
+                                    <h3><i class="fa-solid fa-circle-user text-primary"></i> Thành Viên Trong Phòng</h3>
+                                </div>
+                                <div id="lobby-players-list" class="players-list-row">
+                                    <!-- Dynamic players rendered here -->
+                                </div>
+                            </div>
+
+                            <div class="lobby-guide-panel glass-panel">
+                                <h3><i class="fa-solid fa-circle-info text-primary"></i> Hướng Dẫn Phòng Chờ</h3>
+                                <div class="guide-steps">
+                                    <div class="step">
+                                        <span class="step-num">1</span>
+                                        <p>Sao chép mã phòng hoặc nhấn chuột trái vào danh sách bạn bè bên phải để <strong>Mời bạn bè</strong> vào chơi.</p>
+                                    </div>
+                                    <div class="step">
+                                        <span class="step-num">2</span>
+                                        <p>Nhấp vào nút <strong>Mở Word</strong> để chuyển đổi phòng chờ sang công cộng, cho phép người chơi khác dùng tính năng <strong>Ghép ngẫu nhiên</strong> có thể vào.</p>
+                                    </div>
+                                    <div class="step">
+                                        <span class="step-num">3</span>
+                                        <p>Tất cả mọi người phải nhấn <strong>Sẵn sàng</strong> trước khi chủ phòng bấm <strong>Bắt đầu chơi</strong>.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ACTIVE GAME VIEW (GARTIC PHONE SCREEN) -->
+                    <div id="game-active-view" class="view-panel">
+                        <div class="game-header glass-panel mb-4">
+                            <div class="game-info">
+                                <span class="game-badge"><i class="fa-solid fa-gamepad"></i> GARTIC PHONE</span>
+                                <h2>Vòng <span id="game-round-number">1</span> - <span id="game-round-type">Vẽ Hình</span></h2>
+                                <p id="game-prompt-hint" class="text-neon-cyan">Hãy vẽ từ khóa sau: ...</p>
+                            </div>
+                            <div class="game-timer">
+                                <div class="timer-circle">
+                                    <span id="game-timer-countdown">60</span>s
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="game-canvas-area glass-panel">
+                            <!-- Draw canvas mockup / guess board -->
+                            <div id="draw-canvas-container" class="canvas-wrapper">
+                                <div class="canvas-controls">
+                                    <button class="tool-btn active" title="Bút vẽ"><i class="fa-solid fa-pencil"></i></button>
+                                    <button class="tool-btn" title="Cọ màu"><i class="fa-solid fa-brush"></i></button>
+                                    <input type="color" id="pencil-color" value="#6366f1" class="color-picker-input" />
+                                    <button class="tool-btn" title="Xóa toàn bộ" onclick="clearDrawCanvas()"><i class="fa-solid fa-trash-can"></i></button>
+                                </div>
+                                <div class="mock-canvas" id="canvas-board" onclick="addMockDoodles()">
+                                    <div id="canvas-doodle-area"></div>
+                                    <div class="canvas-placeholder">
+                                        <i class="fa-solid fa-signature"></i>
+                                        <p>Bấm vào đây để vẽ phác thảo (Mock nét vẽ)</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="guess-input-container" class="guess-input-wrapper" style="display: none;">
+                                <div class="guess-avatar-hint">
+                                    <div class="mock-drawing-placeholder" id="guess-image-preview">
+                                        <img src="" id="guess-image" alt="Nét vẽ cần đoán" style="display:none; max-width: 100%; max-height: 100%;" />
+                                        <div class="placeholder-text" id="guess-image-text">Ảnh vẽ của đối phương hiển thị ở đây</div>
+                                    </div>
+                                </div>
+                                <div class="guess-controls">
+                                    <h4>Bạn đoán hình này vẽ gì?</h4>
+                                    <input type="text" id="txt-guess-answer" placeholder="Nhập từ khóa hoặc mô tả phán đoán của bạn..." />
+                                </div>
+                            </div>
+                            
+                            <div class="submit-footer">
+                                <button class="btn-success w-100" id="btn-submit-turn" onclick="submitGameTurn()">
+                                    <i class="fa-solid fa-paper-plane"></i> Nộp Bài / Đợi Mọi Người
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GAME END RESULTS VIEW -->
+                    <div id="game-results-view" class="view-panel">
+                        <div class="glass-panel text-center p-5">
+                            <i class="fa-solid fa-circle-check text-success display-2 mb-3"></i>
+                            <h2>Trò Chơi Kết Thúc!</h2>
+                            <p>Tất cả các vòng chơi đã hoàn thành. Điểm số của bạn đã được tích lũy vào hệ thống.</p>
+                            
+                            <div class="results-summary mt-4">
+                                <h4 class="mb-3 text-neon-cyan">Bài nộp vòng chơi đã được lưu lại thành công!</h4>
+                                <div class="badge-awards mt-3">
+                                    <span class="badge badge-success"><i class="fa-solid fa-plus"></i> +10 Điểm Trải Nghiệm</span>
+                                    <span class="badge badge-warning"><i class="fa-solid fa-medal"></i> Huy Hiệu Sáng Tạo</span>
+                                </div>
+                            </div>
+
+                            <button class="btn-primary mt-4" onclick="returnToLobbyFromGame()">
+                                <i class="fa-solid fa-house"></i> Trở về sảnh trò chơi
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- B. SOCIAL SIDEBAR (RIGHT) -->
+            <aside class="social-sidebar glass-panel">
+                <!-- Sidebar Tabs Navigation -->
+                <div class="sidebar-tabs">
+                    <button id="tab-friends-btn" class="tab-btn active" onclick="switchSidebarTab('friends')">
+                        <i class="fa-solid fa-user-group"></i> Bạn bè
+                    </button>
+                    <button id="tab-leaderboard-btn" class="tab-btn" onclick="switchSidebarTab('leaderboard')">
+                        <i class="fa-solid fa-trophy"></i> Bảng xếp hạng
+                    </button>
+                </div>
+
+                <!-- TAB 1: FRIENDS LIST -->
+                <div id="tab-friends" class="tab-content active">
+                    
+                    <!-- Search box (Tìm kiếm bạn bè bằng tên tài khoản) -->
+                    <div class="search-box">
+                        <div class="input-group-sm">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="txt-search-user" placeholder="Tìm người bằng tên tài khoản..." onkeyup="searchUsersByUsername(this.value)" />
+                        </div>
+                        <div id="search-results" class="search-results-popover">
+                            <!-- Dynamic user search results -->
+                        </div>
+                    </div>
+
+                    <!-- Pending Friend Requests -->
+                    <div id="friend-requests-section" class="friend-requests-panel" style="display: none;">
+                        <h5>Yêu Cầu Kết Bạn Đang Chờ</h5>
+                        <div id="friend-requests-list" class="friend-requests-list-container">
+                            <!-- Dynamic friend requests -->
+                        </div>
+                    </div>
+
+                    <!-- Friend list header -->
+                    <div class="friend-list-header">
+                        <h5>Danh Sách Bạn Bè</h5>
+                        <span id="friends-count-badge" class="count-badge">0</span>
+                    </div>
+
+                    <!-- Friends Scroll Container -->
+                    <div id="friends-list-container" class="friends-list-container">
+                        <!-- Dynamic friends items -->
+                        <div class="no-friends">
+                            <i class="fa-solid fa-user-plus"></i>
+                            <p>Chưa có bạn bè nào. Hãy dùng ô tìm kiếm bên trên hoặc chuột phải người lạ trên Bảng xếp hạng để kết bạn.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: LEADERBOARD -->
+                <div id="tab-leaderboard" class="tab-content">
+                    <div class="leaderboard-header">
+                        <h5>TOP 50 TOÀN CẦU</h5>
+                        <button class="btn-refresh" onclick="loadGlobalLeaderboard()"><i class="fa-solid fa-rotate"></i></button>
+                    </div>
+                    <div id="leaderboard-container" class="leaderboard-container">
+                        <!-- Dynamic leaderboard items -->
+                    </div>
+                </div>
+            </aside>
+
+        </div>
+
+    </div>
+
+    <!-- 3. CUSTOM RIGHT-CLICK CONTEXT MENU -->
+    <div id="custom-context-menu" class="context-menu">
+        <div class="context-header" id="context-user-name">Người dùng</div>
+        <div class="context-divider"></div>
+        <button class="context-item" id="menu-add-friend" onclick="actionAddFriend()">
+            <i class="fa-solid fa-user-plus text-success"></i> Thêm bạn bè
+        </button>
+        <button class="context-item" id="menu-invite-room" onclick="actionInviteFriendToRoom()">
+            <i class="fa-solid fa-paper-plane text-primary"></i> Mời vào phòng chơi
+        </button>
+        <button class="context-item" id="menu-remove-friend" onclick="actionRemoveFriend()">
+            <i class="fa-solid fa-user-xmark text-danger"></i> Xóa bạn bè
+        </button>
+        <button class="context-item" id="menu-view-profile" onclick="actionViewProfile()">
+            <i class="fa-solid fa-circle-info text-info"></i> Xem thông tin
+        </button>
+    </div>
+
+    <!-- 4. REAL-TIME TOAST NOTIFICATIONS WRAPPER -->
+    <div id="toast-wrapper" class="toast-wrapper"></div>
+
+    <!-- SignalR JS Client CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <!-- Core Application Client JS Logic -->
+    <script src="/js/site.js"></script>
+</body>
+</html>
