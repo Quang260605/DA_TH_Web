@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import * as signalR from '@microsoft/signalr';
 import { SidebarPhai } from './components/GiaoDienChung/SidebarPhai';
 import { TrangChu } from './components/TrangChu/TrangChu';
-import { BangVeTreEm } from './components/BangVe/BangVeTreEm';
+import { BangVe } from './components/BangVe/BangVe';
 import { BaiTapHocVe } from './components/HocVe/BaiTapHocVe';
 import { TroChoiTamSaoThatBan } from './components/TroChoi/TroChoiTamSaoThatBan';
 import { Palette, LogOut, User, Lock, ShieldCheck, KeyRound, Sparkles, ArrowLeft } from 'lucide-react';
@@ -790,7 +790,7 @@ function App() {
           )}
 
           {activeTab === 'BangVe' && (
-            <BangVeTreEm userId={user.id} connection={connection} onClose={() => setActiveTab('Home')} />
+            <BangVe userId={user.id} connection={connection} banVeId={dangVeId} onClose={() => setActiveTab('Home')} />
           )}
 
           {activeTab === 'BaiTap' && (
