@@ -35,6 +35,18 @@ namespace DA_Web.Hubs
             ConnectionToUser[Context.ConnectionId] = userId;
             UserToConnection[userId] = Context.ConnectionId;
 
+            // Tự động khôi phục nhóm SignalR nếu người chơi đang ở trong phòng chờ/phòng chơi nào đó
+            var phongHienTai = await _context.NguoiChoiTrongPhongs
+                .Include(rp => rp.PhongCho)
+                .Where(rp => rp.NguoiDungId == userId && (rp.PhongCho!.TrangThai == "DangCho" || rp.PhongCho.TrangThai == "DangChoi"))
+                .Select(rp => rp.PhongCho!.MaPhong)
+                .FirstOrDefaultAsync();
+
+            if (phongHienTai != null)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"Room_{phongHienTai}");
+            }
+
             // Cập nhật trạng thái online đến bạn bè của người này
             var banBeIds = await _context.KetBans
                 .Where(kb => (kb.NguoiDungId1 == userId || kb.NguoiDungId2 == userId) && kb.TrangThai == "DaKetBan")

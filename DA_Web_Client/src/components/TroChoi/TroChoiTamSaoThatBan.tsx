@@ -41,8 +41,8 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
   const [roomPlayers, setRoomPlayers] = useState<RoomPlayer[]>([]);
   const [isReady, setIsReady] = useState(false);
 
-  // Ref theo dõi việc khởi tạo phòng chơi để tránh lặp lại nhiều lần
-  const hasInitializedRoom = useRef(false);
+  // Ref theo dõi mã phòng hoặc trạng thái khởi tạo gần nhất để tránh gọi trùng lặp
+  const lastInitializedRoomRef = useRef<string | null>(null);
   const stateRef = useRef(gameState);
   const hasExitedRef = useRef(false);
 
@@ -67,13 +67,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
     connection.invoke('KickNguoiChoi', maPhong, targetId).catch(err => console.error(err));
   };
 
-  useEffect(() => {
-    return () => {
-      if (stateRef.current === 'lobby' && !hasExitedRef.current && connection && maPhong) {
-        connection.invoke('ThoatPhong', maPhong, userId).catch(err => console.error(err));
-      }
-    };
-  }, [connection, maPhong, userId]);
+
 
   // Vòng chơi hiện tại
   const [vongData, setVongData] = useState<VongChoiData | null>(null);
@@ -97,6 +91,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
     if (!connection) return;
 
     const handleRoomCreated = (data: any) => {
+      lastInitializedRoomRef.current = `join_${data.maPhong}`;
       setMaPhong(data.maPhong);
       if (onRoomCodeChange) onRoomCodeChange(data.maPhong);
       setIsChuPhong(data.chuPhongId === userId);
@@ -187,7 +182,6 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
     connection.on('GameKetThuc', handleGameKetThuc);
 
     return () => {
-      if (onRoomCodeChange) onRoomCodeChange(undefined);
       connection.off('RoomCreated', handleRoomCreated);
       connection.off('RoomJoined', handleRoomJoined);
       connection.off('CapNhatPhong', handleCapNhatPhong);
@@ -207,8 +201,11 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
   // 2. Tự động tạo phòng hoặc join phòng một lần duy nhất khi kết nối sẵn sàng
   useEffect(() => {
     if (!connection) return;
-    if (hasInitializedRoom.current) return;
-    hasInitializedRoom.current = true;
+
+    // Tạo khóa phân biệt lượt khởi tạo dựa trên maPhongInit và loaiPhong
+    const initKey = maPhongInit ? `join_${maPhongInit}` : loaiPhong ? `match_${loaiPhong}` : `create_mini`;
+    if (lastInitializedRoomRef.current === initKey) return;
+    lastInitializedRoomRef.current = initKey;
 
     if (maPhongInit) {
       // Người dùng join phòng có sẵn
@@ -220,7 +217,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
       // Người dùng tự tạo phòng chơi game
       connection.invoke('TaoPhong', userId, loaiPhong || 'TroChoiMini').catch(err => console.error(err));
     }
-  }, [connection, userId, maPhongInit]);
+  }, [connection, userId, maPhongInit, loaiPhong]);
 
   // Bộ đếm ngược thời gian chơi
   useEffect(() => {

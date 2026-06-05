@@ -32,6 +32,7 @@ function App() {
   const [connection, setConnection] = useState<signalR.HubConnection | null>(null);
   const [dangVeId, setDangVeId] = useState<number | undefined>(undefined);
   const [gameRoomCode, setGameRoomCode] = useState<string | undefined>(undefined);
+  const [currentRoomCode, setCurrentRoomCode] = useState<string | undefined>(undefined);
   const [matchType, setMatchType] = useState<'GhepNgauNhien' | 'VeCungBan' | 'TroChoiMini'>('TroChoiMini');
 
   const [notifications, setNotifications] = useState<{
@@ -102,6 +103,15 @@ function App() {
       };
     }
   }, [isLoggedIn, user?.id]);
+ 
+  // Quản lý việc thoát phòng khi gameRoomCode thay đổi hoặc bị xóa
+  useEffect(() => {
+    if (currentRoomCode && currentRoomCode !== gameRoomCode && connection && user) {
+      connection.invoke('ThoatPhong', currentRoomCode, user.id)
+        .catch(err => console.error("Lỗi tự động thoát phòng cũ:", err));
+    }
+    setCurrentRoomCode(gameRoomCode);
+  }, [gameRoomCode, connection, user?.id]);
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
