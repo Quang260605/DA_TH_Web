@@ -117,12 +117,15 @@ namespace DA_Web.Hubs
                             await _context.SaveChangesAsync();
                             await Clients.Group($"Room_{room.MaPhong}").SendAsync("ChuPhongMoi", room.ChuPhongId);
                         }
-                        else
-                        {
-                            room.TrangThai = "DaKetThuc";
-                            _context.Entry(room).State = EntityState.Modified;
-                            await _context.SaveChangesAsync();
-                        }
+                    }
+
+                    // Đảm bảo đóng phòng nếu không còn ai
+                    var playersLeft = await _context.NguoiChoiTrongPhongs.CountAsync(rp => rp.PhongChoId == room.Id);
+                    if (playersLeft == 0)
+                    {
+                        room.TrangThai = "DaKetThuc";
+                        _context.Entry(room).State = EntityState.Modified;
+                        await _context.SaveChangesAsync();
                     }
                 }
             }
@@ -132,9 +135,86 @@ namespace DA_Web.Hubs
 
         // ======================= MODULE 4: PHÒNG CHỜ & GHÉP TRẬN =======================
 
+        private async Task RemoveUserFromAllRooms(int userId, string excludeMaPhong = null)
+        {
+            var oldRooms = await _context.NguoiChoiTrongPhongs
+                .Include(rp => rp.PhongCho)
+                .Where(rp => rp.NguoiDungId == userId && (excludeMaPhong == null || rp.PhongCho!.MaPhong != excludeMaPhong))
+                .ToListAsync();
+
+            foreach (var player in oldRooms)
+            {
+                var room = player.PhongCho!;
+                _context.NguoiChoiTrongPhongs.Remove(player);
+                await _context.SaveChangesAsync();
+
+                if (UserToConnection.TryGetValue(userId, out string connId))
+                {
+                    await Groups.RemoveFromGroupAsync(connId, $"Room_{room.MaPhong}");
+                }
+                
+                await Clients.Group($"Room_{room.MaPhong}").SendAsync("NguoiChoiThoatPhong", userId);
+
+                if (room.ChuPhongId == userId)
+                {
+                    var nguoiChoiConLai = await _context.NguoiChoiTrongPhongs
+                        .Where(rp => rp.PhongChoId == room.Id)
+                        .FirstOrDefaultAsync();
+
+                    if (nguoiChoiConLai != null)
+                    {
+                        room.ChuPhongId = nguoiChoiConLai.NguoiDungId;
+                        _context.Entry(room).State = EntityState.Modified;
+                        await _context.SaveChangesAsync();
+                        await Clients.Group($"Room_{room.MaPhong}").SendAsync("ChuPhongMoi", room.ChuPhongId);
+                    }
+                }
+
+                var playersLeft = await _context.NguoiChoiTrongPhongs.CountAsync(rp => rp.PhongChoId == room.Id);
+                if (playersLeft == 0)
+                {
+                    room.TrangThai = "DaKetThuc";
+                    _context.Entry(room).State = EntityState.Modified;
+                    await _context.SaveChangesAsync();
+                }
+            }
+        }
+
+        public async Task HuyTimPhong(int userId)
+        {
+            await RemoveUserFromAllRooms(userId);
+        }
+
+        public async Task KickNguoiChoi(string maPhong, int targetUserId)
+        {
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int hostId)) return;
+
+            var room = await _context.PhongChos.FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai == "DangCho");
+            if (room == null || room.ChuPhongId != hostId) return; // Chỉ chủ phòng mới được kick
+
+            var targetPlayer = await _context.NguoiChoiTrongPhongs
+                .FirstOrDefaultAsync(rp => rp.NguoiDungId == targetUserId && rp.PhongChoId == room.Id);
+
+            if (targetPlayer != null)
+            {
+                _context.NguoiChoiTrongPhongs.Remove(targetPlayer);
+                await _context.SaveChangesAsync();
+
+                if (UserToConnection.TryGetValue(targetUserId, out string targetConnId))
+                {
+                    await Groups.RemoveFromGroupAsync(targetConnId, $"Room_{maPhong}");
+                    await Clients.Client(targetConnId).SendAsync("BiKickKhoiPhong");
+                }
+                
+                await Clients.Group($"Room_{maPhong}").SendAsync("NguoiChoiThoatPhong", targetUserId);
+            }
+        }
+
         // Tạo phòng chờ mới
         public async Task TaoPhong(int userId, string loaiPhong)
         {
+            await RemoveUserFromAllRooms(userId);
+            
             // loaiPhong: GhepNgauNhien, VeCungBan, TroChoiMini
             string maPhong = GenerateRoomCode();
             var user = await _context.NguoiDungs.FindAsync(userId);
@@ -225,6 +305,8 @@ namespace DA_Web.Hubs
                 return;
             }
 
+            await RemoveUserFromAllRooms(userId, phong.MaPhong);
+
             // Kiểm tra xem đã trong phòng chưa
             var daTrongPhong = await _context.NguoiChoiTrongPhongs
                 .AnyAsync(rp => rp.PhongChoId == phong.Id && rp.NguoiDungId == userId);
@@ -252,13 +334,69 @@ namespace DA_Web.Hubs
                     userId = rp.NguoiDungId,
                     tenHienThi = rp.NguoiDung!.TenHienThi,
                     anhDaiDienUrl = rp.NguoiDung.AnhDaiDienUrl,
-                    sanSang = rp.SanSang
+                    sanSang = rp.SanSang,
+                    isChuPhong = rp.NguoiDungId == phong.ChuPhongId
                 })
                 .ToListAsync();
 
             // Thông báo cho cả phòng danh sách người chơi mới
             await Clients.Group($"Room_{maPhong}").SendAsync("CapNhatPhong", maPhong, danhSachNguoiChoi);
+
+            // Gửi sự kiện cho người vừa join để họ chuyển giao diện
+            await Clients.Caller.SendAsync("RoomJoined", new
+            {
+                phongId = phong.Id,
+                maPhong = phong.MaPhong,
+                chuPhongId = phong.ChuPhongId,
+                loaiPhong = phong.LoaiPhong,
+                soNguoiToiDa = phong.SoNguoiToiDa
+            });
         }
+
+        // Thoát phòng chủ động
+        public async Task ThoatPhong(string maPhong, int userId)
+        {
+            var player = await _context.NguoiChoiTrongPhongs
+                .Include(rp => rp.PhongCho)
+                .FirstOrDefaultAsync(rp => rp.NguoiDungId == userId && rp.PhongCho!.MaPhong == maPhong);
+
+            if (player != null)
+            {
+                var room = player.PhongCho!;
+                _context.NguoiChoiTrongPhongs.Remove(player);
+                await _context.SaveChangesAsync();
+
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Room_{maPhong}");
+                
+                // Báo cho những người còn lại
+                await Clients.Group($"Room_{maPhong}").SendAsync("NguoiChoiThoatPhong", userId);
+
+                // Chuyển chủ phòng hoặc đóng phòng nếu chủ phòng thoát
+                if (room.ChuPhongId == userId)
+                {
+                    var nguoiChoiConLai = await _context.NguoiChoiTrongPhongs
+                        .Where(rp => rp.PhongChoId == room.Id)
+                        .FirstOrDefaultAsync();
+
+                    if (nguoiChoiConLai != null)
+                    {
+                        room.ChuPhongId = nguoiChoiConLai.NguoiDungId;
+                        _context.Entry(room).State = EntityState.Modified;
+                        await _context.SaveChangesAsync();
+                        await Clients.Group($"Room_{maPhong}").SendAsync("ChuPhongMoi", room.ChuPhongId);
+                    }
+                }
+
+                var playersLeft = await _context.NguoiChoiTrongPhongs.CountAsync(rp => rp.PhongChoId == room.Id);
+                if (playersLeft == 0)
+                {
+                    room.TrangThai = "DaKetThuc";
+                    _context.Entry(room).State = EntityState.Modified;
+                    await _context.SaveChangesAsync();
+                }
+            }
+        }
+
 
         // Bấm Sẵn sàng
         public async Task ThayDoiSanSang(string maPhong, int userId)
@@ -346,7 +484,8 @@ namespace DA_Web.Hubs
                     userId = rp.NguoiDungId,
                     tenHienThi = rp.NguoiDung!.TenHienThi,
                     anhDaiDienUrl = rp.NguoiDung.AnhDaiDienUrl,
-                    sanSang = rp.SanSang
+                    sanSang = rp.SanSang,
+                    isChuPhong = rp.NguoiDungId == room.ChuPhongId
                 })
                 .ToListAsync();
 
@@ -585,7 +724,7 @@ namespace DA_Web.Hubs
             {
                 code = new string(Enumerable.Repeat(chars, 5)
                     .Select(s => s[random.Next(s.Length)]).ToArray());
-            } while (_context.PhongChos.Any(p => p.MaPhong == code && p.TrangThai != "DaKetThuc"));
+            } while (_context.PhongChos.Any(p => p.MaPhong == code));
 
             return code;
         }

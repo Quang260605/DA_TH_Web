@@ -21,6 +21,7 @@ interface RoomPlayer {
   tenHienThi: string;
   anhDaiDienUrl: string;
   sanSang: boolean;
+  isChuPhong?: boolean;
 }
 
 interface VongChoiData {
@@ -42,6 +43,37 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
 
   // Ref theo dõi việc khởi tạo phòng chơi để tránh lặp lại nhiều lần
   const hasInitializedRoom = useRef(false);
+  const stateRef = useRef(gameState);
+  const hasExitedRef = useRef(false);
+
+  useEffect(() => {
+    stateRef.current = gameState;
+  }, [gameState]);
+
+  const handleThoatPhong = async () => {
+    hasExitedRef.current = true;
+    if (connection && maPhong) {
+      try {
+        await connection.invoke('ThoatPhong', maPhong, userId);
+      } catch (err) {
+        console.error("Lỗi khi thoát phòng:", err);
+      }
+    }
+    if (onClose) onClose();
+  };
+
+  const handleKickPlayer = (targetId: number) => {
+    if (!connection || !maPhong) return;
+    connection.invoke('KickNguoiChoi', maPhong, targetId).catch(err => console.error(err));
+  };
+
+  useEffect(() => {
+    return () => {
+      if (stateRef.current === 'lobby' && !hasExitedRef.current && connection && maPhong) {
+        connection.invoke('ThoatPhong', maPhong, userId).catch(err => console.error(err));
+      }
+    };
+  }, [connection, maPhong, userId]);
 
   // Vòng chơi hiện tại
   const [vongData, setVongData] = useState<VongChoiData | null>(null);
@@ -68,7 +100,14 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
       setMaPhong(data.maPhong);
       if (onRoomCodeChange) onRoomCodeChange(data.maPhong);
       setIsChuPhong(data.chuPhongId === userId);
-      setRoomPlayers([{ userId, tenHienThi, anhDaiDienUrl: '/assets/avatars/default.png', sanSang: true }]);
+      setRoomPlayers([{ userId, tenHienThi, anhDaiDienUrl: '/assets/avatars/default.png', sanSang: true, isChuPhong: true }]);
+    };
+
+    const handleRoomJoined = (data: any) => {
+      setMaPhong(data.maPhong);
+      if (onRoomCodeChange) onRoomCodeChange(data.maPhong);
+      setIsChuPhong(data.chuPhongId === userId);
+      // roomPlayers will be updated by CapNhatPhong which is sent simultaneously
     };
 
     const handleCapNhatPhong = (roomCode: string, players: RoomPlayer[]) => {
@@ -76,16 +115,38 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
       if (onRoomCodeChange) onRoomCodeChange(roomCode);
       setRoomPlayers(players);
       const me = players.find(p => p.userId === userId);
-      if (me) setIsReady(me.sanSang);
-      
-      // Kiểm tra xem ai là chủ phòng thực tế
-      if (players.length > 0 && players[0].userId === userId) {
-        setIsChuPhong(true);
+      if (me) {
+        setIsReady(me.sanSang);
+        setIsChuPhong(!!me.isChuPhong);
       }
     };
 
     const handleChuPhongMoi = (chuPhongId: number) => {
       setIsChuPhong(chuPhongId === userId);
+      setRoomPlayers(prev => prev.map(p => p.userId === chuPhongId ? { ...p, isChuPhong: true } : { ...p, isChuPhong: false }));
+    };
+
+    const handleNguoiChoiThoatPhong = (thoatUserId: number) => {
+      setRoomPlayers(prev => prev.filter(p => p.userId !== thoatUserId));
+    };
+
+    const handleBiKickKhoiPhong = () => {
+      alert("Bạn đã bị chủ phòng mời ra khỏi phòng chơi.");
+      if (onClose) onClose();
+    };
+
+    const handleLoiPhong = (message: string) => {
+      alert("Lỗi phòng: " + message);
+      if (onClose) onClose();
+    };
+
+    const handleLoiGame = (message: string) => {
+      alert("Lỗi game: " + message);
+    };
+
+    const handleGameBiHuyDocDuong = (_thoatUserId: number, message: string) => {
+      alert(message);
+      if (onClose) onClose();
     };
 
     const handleNguoiChoiThayDoiSanSang = (uId: number, ready: boolean) => {
@@ -112,8 +173,14 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
     };
 
     connection.on('RoomCreated', handleRoomCreated);
+    connection.on('RoomJoined', handleRoomJoined);
     connection.on('CapNhatPhong', handleCapNhatPhong);
     connection.on('ChuPhongMoi', handleChuPhongMoi);
+    connection.on('NguoiChoiThoatPhong', handleNguoiChoiThoatPhong);
+    connection.on('BiKickKhoiPhong', handleBiKickKhoiPhong);
+    connection.on('LoiPhong', handleLoiPhong);
+    connection.on('LoiGame', handleLoiGame);
+    connection.on('GameBiHuyDocDuong', handleGameBiHuyDocDuong);
     connection.on('NguoiChoiThayDoiSanSang', handleNguoiChoiThayDoiSanSang);
     connection.on('BatDauVongChoi', handleBatDauVongChoi);
     connection.on('NguoiChoiDaNopBai', handleNguoiChoiDaNopBai);
@@ -122,8 +189,14 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
     return () => {
       if (onRoomCodeChange) onRoomCodeChange(undefined);
       connection.off('RoomCreated', handleRoomCreated);
+      connection.off('RoomJoined', handleRoomJoined);
       connection.off('CapNhatPhong', handleCapNhatPhong);
       connection.off('ChuPhongMoi', handleChuPhongMoi);
+      connection.off('NguoiChoiThoatPhong', handleNguoiChoiThoatPhong);
+      connection.off('BiKickKhoiPhong', handleBiKickKhoiPhong);
+      connection.off('LoiPhong', handleLoiPhong);
+      connection.off('LoiGame', handleLoiGame);
+      connection.off('GameBiHuyDocDuong', handleGameBiHuyDocDuong);
       connection.off('NguoiChoiThayDoiSanSang', handleNguoiChoiThayDoiSanSang);
       connection.off('BatDauVongChoi', handleBatDauVongChoi);
       connection.off('NguoiChoiDaNopBai', handleNguoiChoiDaNopBai);
@@ -302,20 +375,42 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
                     padding: '10px 16px',
                     border: '2px solid #2c3e50',
                     borderRadius: '16px',
-                    background: p.sanSang ? '#f0fdf4' : 'white',
+                    background: p.isChuPhong ? '#fff5f5' : p.sanSang ? '#f0fdf4' : 'white',
                     boxShadow: '0 4px 0 rgba(44, 62, 80, 0.1)'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img src={p.anhDaiDienUrl} alt={p.tenHienThi} style={{ width: '36px', height: '36px', borderRadius: '50%', border: '2px solid #2c3e50' }} />
                       <span style={{ fontWeight: 'bold' }}>{p.tenHienThi} {p.userId === userId && "(Bạn)"}</span>
                     </div>
-                    <div>
-                      {p.sanSang ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {p.isChuPhong ? (
+                        <span style={{ color: '#ff4757', fontWeight: 'bold', fontSize: '0.9rem' }}>Chủ phòng</span>
+                      ) : p.sanSang ? (
                         <span style={{ color: '#16a34a', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.9rem' }}>
                           <CheckCircle2 size={16} /> Đã sẵn sàng
                         </span>
                       ) : (
                         <span style={{ color: '#94a3b8', fontWeight: 'bold', fontSize: '0.9rem' }}>Đang chờ...</span>
+                      )}
+
+                      {isChuPhong && !p.isChuPhong && (
+                        <button
+                          onClick={() => handleKickPlayer(p.userId)}
+                          style={{
+                            marginLeft: '12px',
+                            background: '#ff4757',
+                            color: 'white',
+                            border: '2px solid #2c3e50',
+                            borderRadius: '8px',
+                            padding: '4px 10px',
+                            cursor: 'pointer',
+                            fontSize: '0.8rem',
+                            fontWeight: 'bold',
+                            boxShadow: '0 2px 0 #2c3e50'
+                          }}
+                        >
+                          Đuổi
+                        </button>
                       )}
                     </div>
                   </div>
@@ -604,7 +699,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
               </button>
             ) : (
               <button 
-                onClick={onClose}
+                onClick={handleThoatPhong}
                 className="btn-bubble btn-green"
                 style={{ padding: '8px 24px', fontSize: '0.9rem', boxShadow: '0 3px 0 #00b894' }}>
                 Về Trang chủ
@@ -616,7 +711,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ user
 
       {onClose && gameState === 'lobby' && (
         <button 
-          onClick={onClose}
+          onClick={handleThoatPhong}
           style={{
             marginTop: '20px',
             background: 'none',

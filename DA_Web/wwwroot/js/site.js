@@ -149,35 +149,36 @@ async function customRegisterAndLogin() {
     }
 }
 
-// LOGIN SUCCESS HANDLER
 function loginSuccess(user) {
     document.getElementById("login-screen").classList.remove("active");
     document.getElementById("dashboard-screen").classList.add("active");
-
-    // Populate user profile details
+    
     document.getElementById("user-display-name").innerText = user.tenHienThi;
-    document.getElementById("user-level").innerText = user.capDoHienTai;
     document.getElementById("user-score").innerText = user.tongDiem;
-    document.getElementById("user-avatar").src = `https://api.dicebear.com/7.x/bottts/svg?seed=${user.tenDangNhap}`;
+    document.getElementById("user-avatar-img").src = user.anhDaiDienUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.tenHienThi}`;
 
-    // Load static data
+    // Load initial data
     loadFriends();
     loadFriendRequests();
     loadGlobalLeaderboard();
     loadActiveRooms();
 
-    // Start SignalR
     initSignalRConnection();
 }
 
-// LOGOUT
-function logout() {
+function logoutUser() {
+    localStorage.removeItem("dwm_user");
+    currentUser = null;
     if (connection) {
         connection.stop();
     }
-    localStorage.removeItem("dwm_user");
-    currentUser = null;
+    
+    // Clear state
+    onlineFriends.clear();
+    friendsList = [];
+    currentRoomPlayers = [];
     currentRoomCode = null;
+    currentRoomHostId = null;
     
     // Switch views
     document.getElementById("dashboard-screen").classList.remove("active");
@@ -234,7 +235,17 @@ function initSignalRConnection() {
 
     connection.on("RoomCreated", (room) => {
         currentRoomCode = room.maPhong;
+        currentRoomHostId = room.chuPhongId;
         isHost = room.chuPhongId === currentUser.id;
+        switchToRoomLobbyView(room);
+        loadActiveRooms();
+    });
+
+    connection.on("RoomJoined", (room) => {
+        currentRoomCode = room.maPhong;
+        currentRoomHostId = room.chuPhongId;
+        isHost = room.chuPhongId === currentUser.id;
+        document.getElementById("matchmaking-overlay").classList.remove("active");
         switchToRoomLobbyView(room);
         loadActiveRooms();
     });
@@ -257,13 +268,14 @@ function initSignalRConnection() {
     });
 
     connection.on("NguoiChoiThoatPhong", (userId) => {
-        currentRoomPlayers = currentRoomPlayers.filter(p => p.userId !== userId);
+        currentRoomPlayers = currentRoomPlayers.filter(p => p.userId != userId);
         renderLobbyPlayers();
         loadActiveRooms();
     });
 
     connection.on("ChuPhongMoi", (newHostId) => {
-        isHost = currentUser.id === newHostId;
+        currentRoomHostId = newHostId;
+        isHost = currentUser.id == newHostId;
         showToast("Thay đổi phòng", `Chủ phòng mới là ${isHost ? 'bạn' : 'một người chơi khác'}.`, "info");
         
         // Update host buttons
@@ -271,6 +283,16 @@ function initSignalRConnection() {
         const openWorldBtn = document.getElementById("btn-open-world");
         if (startBtn) startBtn.style.display = isHost ? "inline-block" : "none";
         if (openWorldBtn) openWorldBtn.style.display = isHost ? "inline-block" : "none";
+
+        // Re-render to update the host crown icon
+        renderLobbyPlayers();
+    });
+
+    connection.on("BiKickKhoiPhong", () => {
+        showToast("Bị đuổi", "Bạn đã bị chủ phòng mời ra khỏi phòng.", "warning");
+        setTimeout(() => {
+            window.location.reload();
+        }, 1500);
     });
 
     connection.on("PhongDaMoCongDong", (maxPlayers) => {
@@ -697,10 +719,14 @@ function startGameSession() {
 }
 
 function leaveRoomLobby() {
-    if (connection) {
-        // Disconnecting from the group triggers OnDisconnected-like cleanup if we call a hub leave method
-        // For simplicity, we stop connection and reconnect to reset state or we reload the window.
-        // Reload is the cleanest way to fully reset all SignalR and local state back to dashboard!
+    if (connection && currentRoomCode) {
+        connection.invoke("ThoatPhong", currentRoomCode, currentUser.id).then(() => {
+            window.location.reload();
+        }).catch(err => {
+            console.error("Lỗi thoát phòng: ", err);
+            window.location.reload();
+        });
+    } else {
         window.location.reload();
     }
 }
@@ -716,6 +742,9 @@ function startRandomMatchmaking() {
 
 function cancelMatchmaking() {
     document.getElementById("matchmaking-overlay").classList.remove("active");
+    if (connection) {
+        connection.invoke("HuyTimPhong", currentUser.id);
+    }
 }
 
 // FRONTEND VIEW SWITCHING
@@ -756,21 +785,34 @@ function renderLobbyPlayers() {
     document.getElementById("lobby-player-count").innerText = `${currentRoomPlayers.length}/8`;
 
     list.innerHTML = currentRoomPlayers.map(p => {
-        // Host gets a crown
-        const isUserHost = p.userId === currentUser.id ? isHost : false; // Simplification, host is always the first one who creates
-        const crown = p.userId === currentUser.id && isHost ? `<i class="fa-solid fa-crown host-crown"></i>` : '';
-        const readyClass = p.sanSang ? 'ready' : 'waiting';
-        const readyText = p.sanSang ? 'SẴN SÀNG' : 'ĐANG CHỜ';
+        const isThisUserHost = p.userId == currentRoomHostId;
+        const crown = isThisUserHost ? `<i class="fa-solid fa-crown host-crown"></i>` : '';
+        const readyClass = isThisUserHost ? 'host' : (p.sanSang ? 'ready' : 'waiting');
+        const readyText = isThisUserHost ? 'CHỦ PHÒNG' : (p.sanSang ? 'ĐÃ SẴN SÀNG' : 'ĐANG CHỜ...');
+
+        let kickBtn = '';
+        if (isHost && !isThisUserHost) {
+            kickBtn = `<button class="btn btn-sm btn-outline-danger ms-auto" style="border: none; padding: 2px 6px;" onclick="kickPlayer(${p.userId})" title="Đuổi khỏi phòng"><i class="fa-solid fa-user-xmark"></i></button>`;
+        }
 
         return `
-            <div class="lobby-player-card ${p.userId === currentUser.id && isHost ? 'is-chu-phong' : ''}">
+            <div class="lobby-player-card ${isThisUserHost ? 'is-chu-phong' : ''}">
                 ${crown}
                 <img src="https://api.dicebear.com/7.x/bottts/svg?seed=${p.tenHienThi}" alt="avatar" />
                 <span class="name">${p.tenHienThi}</span>
                 <span class="status-text ${readyClass}">${readyText}</span>
+                ${kickBtn}
             </div>
         `;
     }).join("");
+}
+
+function kickPlayer(userId) {
+    if (confirm("Bạn có chắc chắn muốn đuổi người chơi này khỏi phòng?")) {
+        if (connection && currentRoomCode) {
+            connection.invoke("KickNguoiChoi", currentRoomCode, userId).catch(err => console.error(err));
+        }
+    }
 }
 
 function returnToLobbyFromGame() {

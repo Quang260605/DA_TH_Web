@@ -5,7 +5,7 @@ using DA_Web.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Cấu hình Connection String cho SQL Server NATSUME\SQLEXPRESS
+// 1. Cấu hình Connection String cho SQL Server
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString));
