@@ -1,0 +1,14 @@
+## 1. Implementation
+- [x] 1.1 Add `GameRoomState` class and static dictionary `ActiveGames` in `GameHub.cs`.
+- [x] 1.2 Add Vietnamese word list/pool in `GameHub.cs`.
+- [x] 1.3 Update `BatDauGame` in `GameHub.cs` to initialize game state, order players by join time, and trigger the word selection phase.
+- [x] 1.4 Implement `ChonTuKhoa` in `GameHub.cs` to transition into the drawing phase.
+- [x] 1.5 Implement `DongBoVeGame` in `GameHub.cs` to sync canvas actions (draw stroke, clear, undo).
+- [x] 1.6 Implement `GuiPhanDoan` in `GameHub.cs` to check guesses, distribute points, trigger correctness notifications, and manage turn transitions.
+- [x] 1.7 Implement a timeout/transition handler method in `GameHub.cs` to transition turns and rounds.
+- [x] 1.8 Redesign the frontend state system in `TroChoiTamSaoThatBan.tsx` to support the turn phases.
+- [x] 1.9 Build the simplified HTML5 canvas wrapper in `TroChoiTamSaoThatBan.tsx` with undo, clear, colors, and brush sizes.
+- [x] 1.10 Wire up real-time canvas draw/clear/undo synchronization on the client.
+- [x] 1.11 Render the word selection overlays, guess inputs, correct guess list, and chat box.
+- [x] 1.12 Integrate timers for word selection (15s) and drawing (60s) with auto-triggers.
+- [x] 1.13 Verify game rounds, turns, scoring, and leaderboard results.

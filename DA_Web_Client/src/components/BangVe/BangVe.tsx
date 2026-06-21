@@ -3,10 +3,9 @@ import axios from 'axios';
 import { API_URL } from '../../config';
 import { 
   Undo2, Redo2, Paintbrush, Eraser, PaintBucket, Pipette, Move, 
-  Square, Circle, Triangle, Slash, Layers, Eye, EyeOff, Plus, 
-  Trash2, ArrowUp, ArrowDown, Settings, Save, Download, Sparkles, 
-  Smile, Image as ImageIcon, Check, X, ZoomIn, ZoomOut, RefreshCw,
-  Maximize2, Minimize2, Scissors
+  Layers, Eye, EyeOff, Plus, Trash2, ArrowUp, ArrowDown, Save, 
+  Download, Smile, Image as ImageIcon, X, ZoomIn, ZoomOut, Maximize2, 
+  Minimize2
 } from 'lucide-react';
 import { HubConnection } from '@microsoft/signalr';
 
@@ -256,7 +255,7 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     return () => {
       connection.off('NhanNetVeDongBo');
     };
-  }, [connection, maPhongVect, layers]);
+  }, [connection, maPhongVect]);
 
   // Cập nhật cấu hình Cọ vẽ khi cài đặt thay đổi
   useEffect(() => {
@@ -522,7 +521,6 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
       return;
     }
 
-    const lastPoint = pointsRef.current[pointsRef.current.length - 1];
     pointsRef.current.push({ ...coords, pressure });
 
     // Nếu dịch chuyển ra xa quá 8px so với điểm bắt đầu giữ thì reset timer nắn nét
@@ -555,9 +553,10 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     const lastSmoothed = lastSmoothedPointRef.current;
     if (lastSmoothed) {
       const strength = stabilizerRef.current / 10; // 0 -> 0.9
+      const lastSmoothedPressure = lastSmoothed.pressure ?? 1.0;
       const sx = lastSmoothed.x + (coords.x - lastSmoothed.x) * (1 - strength);
       const sy = lastSmoothed.y + (coords.y - lastSmoothed.y) * (1 - strength);
-      const sp = lastSmoothed.pressure + (pressure - lastSmoothed.pressure) * (1 - strength);
+      const sp = lastSmoothedPressure + (pressure - lastSmoothedPressure) * (1 - strength);
 
       const nextSmoothed = { x: sx, y: sy, pressure: sp };
 
@@ -1308,7 +1307,7 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     setCanRedo(false);
   };
 
-  const handleUndo = () => {
+  const handleUndo = (isRemote: boolean = false) => {
     if (undoStackRef.current.length < 2) return;
 
     // Pop state hiện tại để sang Redo
@@ -1342,9 +1341,13 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
 
     setCanUndo(undoStackRef.current.length > 1);
     setCanRedo(true);
+
+    if (!isRemote) {
+      syncDrawing({ type: 'undo' });
+    }
   };
 
-  const handleRedo = () => {
+  const handleRedo = (isRemote: boolean = false) => {
     if (redoStackRef.current.length === 0) return;
 
     const nextState = redoStackRef.current.pop()!;
@@ -1373,6 +1376,10 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
 
     setCanUndo(true);
     setCanRedo(redoStackRef.current.length > 0);
+
+    if (!isRemote) {
+      syncDrawing({ type: 'redo' });
+    }
   };
 
   // ----------------------------------------------------
@@ -1394,6 +1401,12 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     setActiveLayerId(newId);
     
     saveHistoryState(updated);
+
+    syncDrawing({
+      type: 'add-layer',
+      layerId: newId,
+      name: newLayer.name
+    });
   };
 
   const deleteLayer = (id: string) => {
@@ -1413,18 +1426,44 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     }
     
     saveHistoryState(updated);
+
+    syncDrawing({
+      type: 'delete-layer',
+      layerId: id
+    });
   };
 
   const toggleLayerVisible = (id: string) => {
-    setLayers(layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l));
+    const layer = layers.find(l => l.id === id);
+    if (!layer) return;
+    const nextVisible = !layer.visible;
+    setLayers(layers.map(l => l.id === id ? { ...l, visible: nextVisible } : l));
+    
+    syncDrawing({
+      type: 'layer-visible',
+      layerId: id,
+      visible: nextVisible
+    });
   };
 
   const changeLayerOpacity = (id: string, opacity: number) => {
     setLayers(layers.map(l => l.id === id ? { ...l, opacity } : l));
+    
+    syncDrawing({
+      type: 'layer-opacity',
+      layerId: id,
+      opacity
+    });
   };
 
   const changeLayerBlendMode = (id: string, blendMode: GlobalCompositeOperation) => {
     setLayers(layers.map(l => l.id === id ? { ...l, blendMode } : l));
+    
+    syncDrawing({
+      type: 'layer-blend',
+      layerId: id,
+      blendMode
+    });
   };
 
   const moveLayer = (idx: number, dir: 'up' | 'down') => {
@@ -1438,6 +1477,12 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
 
     setLayers(copy);
     saveHistoryState(copy);
+
+    syncDrawing({
+      type: 'layer-move',
+      layerId: temp.id,
+      direction: dir
+    });
   };
 
   const mergeDown = (idx: number) => {
@@ -1475,6 +1520,11 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
       setActiveLayerId(bottomLayer.id);
 
       saveHistoryState(updated);
+
+      syncDrawing({
+        type: 'merge-down',
+        layerId: currentLayer.id
+      });
     }
   };
 
@@ -1492,6 +1542,11 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
       const updated = layers.map(l => l.id === id ? { ...l, strokes: [] } : l);
       setLayers(updated);
       saveHistoryState(updated);
+
+      syncDrawing({
+        type: 'clear-layer',
+        layerId: id
+      });
     }
   };
 
@@ -1594,6 +1649,19 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
             setLayers(prev => prev.map(l => l.id === newId ? { ...l, strokes: [newStroke] } : l));
 
             saveHistoryState();
+
+            // Đồng bộ nhập ảnh
+            syncDrawing({
+              id: strokeId,
+              type: 'image',
+              imgUrl: event.target?.result as string,
+              imgX: x,
+              imgY: y,
+              imgW: w,
+              imgH: h,
+              opacity: 1.0,
+              layerId: newId
+            });
           }
         }, 100);
       };
@@ -1645,16 +1713,16 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
           saveHistoryState();
           setShowStickers(false);
 
-          // Đồng bộ chèn sticker
+          // Đồng bộ chèn sticker dưới dạng ảnh
           syncDrawing({
             id: strokeId,
-            type: 'shape',
-            shapeType: 'rectangle',
-            start: { x: 150, y: 150 },
-            end: { x: 330, y: 330 },
-            color: brushColor,
-            size: brushSize,
-            opacity: brushOpacity,
+            type: 'image',
+            imgUrl: url,
+            imgX: 150,
+            imgY: 150,
+            imgW: 180,
+            imgH: 180,
+            opacity: 1.0,
             layerId: newId
           });
         }
@@ -1808,7 +1876,109 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
     try {
       const data = JSON.parse(dataStr);
       
-      // Hỗ trợ đồng bộ xóa nét vẽ bằng Tẩy theo nét từ xa
+      // 1. Lệnh Undo / Redo từ xa
+      if (data.type === 'undo') {
+        handleUndo(true);
+        return;
+      }
+      if (data.type === 'redo') {
+        handleRedo(true);
+        return;
+      }
+
+      // 2. Lệnh quản lý Layer từ xa
+      if (data.type === 'add-layer') {
+        setLayers(prev => {
+          if (prev.some(l => l.id === data.layerId)) return prev;
+          const newLayer: Layer = {
+            id: data.layerId,
+            name: data.name,
+            visible: true,
+            opacity: 1.0,
+            blendMode: 'source-over',
+            strokes: []
+          };
+          return [...prev, newLayer];
+        });
+        return;
+      }
+      if (data.type === 'delete-layer') {
+        setLayers(prev => prev.filter(l => l.id !== data.layerId));
+        return;
+      }
+      if (data.type === 'clear-layer') {
+        setLayers(prev => prev.map(l => l.id === data.layerId ? { ...l, strokes: [] } : l));
+        setTimeout(() => {
+          redrawLayer(data.layerId);
+        }, 50);
+        return;
+      }
+      if (data.type === 'layer-visible') {
+        setLayers(prev => prev.map(l => l.id === data.layerId ? { ...l, visible: data.visible } : l));
+        return;
+      }
+      if (data.type === 'layer-opacity') {
+        setLayers(prev => prev.map(l => l.id === data.layerId ? { ...l, opacity: data.opacity } : l));
+        return;
+      }
+      if (data.type === 'layer-blend') {
+        setLayers(prev => prev.map(l => l.id === data.layerId ? { ...l, blendMode: data.blendMode } : l));
+        return;
+      }
+      if (data.type === 'layer-move') {
+        setLayers(prev => {
+          const idx = prev.findIndex(l => l.id === data.layerId);
+          if (idx === -1) return prev;
+          const nextIdx = data.direction === 'up' ? idx + 1 : idx - 1;
+          if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+          const copy = [...prev];
+          const temp = copy[idx];
+          copy[idx] = copy[nextIdx];
+          copy[nextIdx] = temp;
+          return copy;
+        });
+        return;
+      }
+      if (data.type === 'merge-down') {
+        setLayers(prev => {
+          const idx = prev.findIndex(l => l.id === data.layerId);
+          if (idx <= 0) return prev;
+          const targetIdx = idx - 1;
+          const currentLayer = prev[idx];
+          const bottomLayer = prev[targetIdx];
+          
+          const mergedStrokes = [
+            ...(bottomLayer.strokes || []),
+            ...(currentLayer.strokes || []).map(s => ({
+              ...s,
+              opacity: s.opacity * currentLayer.opacity
+            }))
+          ];
+
+          const updated = prev
+            .filter(l => l.id !== currentLayer.id)
+            .map(l => l.id === bottomLayer.id ? { ...l, strokes: mergedStrokes } : l);
+
+          setTimeout(() => {
+            const bottomCanvas = document.getElementById(`canvas-layer-${bottomLayer.id}`) as HTMLCanvasElement;
+            const currentCanvas = document.getElementById(`canvas-layer-${currentLayer.id}`) as HTMLCanvasElement;
+            if (bottomCanvas && currentCanvas) {
+              const bottomCtx = bottomCanvas.getContext('2d')!;
+              bottomCtx.save();
+              bottomCtx.globalAlpha = currentLayer.opacity;
+              bottomCtx.globalCompositeOperation = currentLayer.blendMode;
+              bottomCtx.drawImage(currentCanvas, 0, 0);
+              bottomCtx.restore();
+            }
+            redrawLayer(bottomLayer.id, updated);
+          }, 50);
+
+          return updated;
+        });
+        return;
+      }
+
+      // 3. Hỗ trợ đồng bộ xóa nét vẽ bằng Tẩy theo nét từ xa
       if (data.type === 'delete-stroke') {
         const targetLayerId = data.layerId;
         setLayers(prev => {
@@ -1827,44 +1997,10 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
         return;
       }
 
-      const targetCanvas = document.getElementById(`canvas-layer-${data.layerId}`) as HTMLCanvasElement;
-      if (!targetCanvas) return;
-      const ctx = targetCanvas.getContext('2d')!;
-
-      ctx.save();
-      if (data.type === 'freehand') {
-        if (data.isEraser) {
-          ctx.globalCompositeOperation = 'destination-out';
-        } else {
-          ctx.globalCompositeOperation = 'source-over';
-        }
-        ctx.strokeStyle = data.color;
-        ctx.lineWidth = data.size;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.globalAlpha = data.opacity;
-
-        const pts = data.points;
-        if (pts.length > 0) {
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) {
-            ctx.lineTo(pts[i].x, pts[i].y);
-          }
-          ctx.stroke();
-        }
-      } else if (data.type === 'shape') {
-        ctx.globalAlpha = data.opacity;
-        drawShape(ctx, data.shapeType, data.start, data.end, data.color, data.size);
-      } else if (data.type === 'bucket') {
-        floodFill(ctx, data.x, data.y, data.color, data.tolerance);
-      }
-      ctx.restore();
-
-      // Đưa nét vẽ nhận được từ xa vào danh sách nét vẽ của Layer đó để giữ đồng bộ
+      // 4. Đồng bộ hóa nét vẽ, hình dạng hoặc đổ màu từ xa
       const newStroke: Stroke = {
         id: data.id || `remote-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: data.type === 'bucket' ? 'bucket' : (data.type === 'shape' ? 'shape' : 'freehand'),
+        type: data.type,
         points: data.points,
         shapeType: data.shapeType,
         start: data.start,
@@ -1872,9 +2008,90 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
         color: data.color,
         size: data.size,
         opacity: data.opacity,
-        isEraser: data.isEraser
+        isEraser: data.isEraser,
+        imgUrl: data.imgUrl,
+        imgX: data.imgX,
+        imgY: data.imgY,
+        imgW: data.imgW,
+        imgH: data.imgH,
+        tolerance: data.tolerance
       };
-      setLayers(prev => prev.map(l => l.id === data.layerId ? { ...l, strokes: [...(l.strokes || []), newStroke] } : l));
+
+      setLayers(prev => {
+        const layerExists = prev.some(l => l.id === data.layerId);
+        if (!layerExists) {
+          // Tạo mới layer và chèn nét vẽ vào
+          const newLayer: Layer = {
+            id: data.layerId,
+            name: data.layerName || `Layer ${prev.length}`,
+            visible: true,
+            opacity: 1.0,
+            blendMode: 'source-over',
+            strokes: [newStroke]
+          };
+          const updated = [...prev, newLayer];
+          setTimeout(() => {
+            redrawLayer(data.layerId, updated);
+          }, 50);
+          return updated;
+        } else {
+          // Layer đã tồn tại, chèn nét vẽ vào
+          const updated = prev.map(l => l.id === data.layerId ? { ...l, strokes: [...(l.strokes || []), newStroke] } : l);
+          
+          // Vẽ trực tiếp lên Canvas hiện có
+          const targetCanvas = document.getElementById(`canvas-layer-${data.layerId}`) as HTMLCanvasElement;
+          if (targetCanvas) {
+            const ctx = targetCanvas.getContext('2d')!;
+            ctx.save();
+            if (data.type === 'freehand') {
+              if (data.isEraser) {
+                ctx.globalCompositeOperation = 'destination-out';
+              } else {
+                ctx.globalCompositeOperation = 'source-over';
+              }
+              ctx.strokeStyle = data.color;
+              ctx.lineWidth = data.size;
+              ctx.lineCap = 'round';
+              ctx.lineJoin = 'round';
+              ctx.globalAlpha = data.opacity;
+
+              const pts = data.points;
+              if (pts && pts.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) {
+                  ctx.lineTo(pts[i].x, pts[i].y);
+                }
+                ctx.stroke();
+              }
+            } else if (data.type === 'shape') {
+              ctx.globalAlpha = data.opacity;
+              drawShape(ctx, data.shapeType, data.start, data.end, data.color, data.size);
+            } else if (data.type === 'bucket') {
+              floodFill(ctx, data.x, data.y, data.color, data.tolerance);
+            } else if (data.type === 'image' && data.imgUrl) {
+              ctx.globalAlpha = data.opacity;
+              const cachedImg = imageCacheRef.current.get(data.imgUrl);
+              if (cachedImg && cachedImg.complete) {
+                ctx.drawImage(cachedImg, data.imgX, data.imgY, data.imgW, data.imgH);
+              } else {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                  imageCacheRef.current.set(data.imgUrl, img);
+                  ctx.save();
+                  ctx.globalAlpha = data.opacity;
+                  ctx.drawImage(img, data.imgX, data.imgY, data.imgW, data.imgH);
+                  ctx.restore();
+                };
+                img.src = data.imgUrl;
+              }
+            }
+            ctx.restore();
+          }
+          return updated;
+        }
+      });
     } catch (e) {
       console.error("Lỗi xử lý vẽ từ xa:", e);
     }
@@ -2043,7 +2260,7 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
 
           <button 
             disabled={!canUndo}
-            onClick={handleUndo}
+            onClick={() => handleUndo()}
             style={{
               background: '#23232f',
               color: canUndo ? '#ffffff' : '#5f5f7f',
@@ -2063,7 +2280,7 @@ export const BangVe: React.FC<BangVeProps> = ({ userId, connection, maPhongVect,
 
           <button 
             disabled={!canRedo}
-            onClick={handleRedo}
+            onClick={() => handleRedo()}
             style={{
               background: '#23232f',
               color: canRedo ? '#ffffff' : '#5f5f7f',

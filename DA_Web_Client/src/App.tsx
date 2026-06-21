@@ -91,6 +91,14 @@ function App() {
               setNotifications(prev => prev.filter(n => n.id !== id));
             }, 15000);
           });
+
+          // Lắng nghe bắt đầu vẽ chung (VeCungBan)
+          newConnection.on('BatDauVeChung', (maPhong: string) => {
+            console.log("Nhận sự kiện BatDauVeChung, mã phòng:", maPhong);
+            setGameRoomCode(maPhong);
+            setDangVeId(undefined);
+            setActiveTab('BangVe');
+          });
         })
         .catch(err => console.error("Lỗi kết nối SignalR Hub:", err));
 
@@ -98,6 +106,7 @@ function App() {
         if (newConnection) {
           newConnection.off('NhanLoiMoiVaoPhong');
           newConnection.off('NhanLoiMoiVeChung');
+          newConnection.off('BatDauVeChung');
           newConnection.stop();
         }
       };
@@ -800,7 +809,16 @@ function App() {
           )}
 
           {activeTab === 'BangVe' && (
-            <BangVe userId={user.id} connection={connection} banVeId={dangVeId} onClose={() => setActiveTab('Home')} />
+            <BangVe 
+              userId={user.id} 
+              connection={connection} 
+              maPhongVect={gameRoomCode}
+              banVeId={dangVeId} 
+              onClose={() => {
+                setGameRoomCode(undefined);
+                setActiveTab('Home');
+              }} 
+            />
           )}
 
           {activeTab === 'BaiTap' && (

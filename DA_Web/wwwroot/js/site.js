@@ -8,6 +8,8 @@ let friendsList = [];
 let onlineFriends = new Set();
 let contextMenuTargetUser = null;
 let matchmakingInterval = null;
+let currentRoomMaxPlayers = 8;
+let currentRoomLoaiPhong = "TroChoiMini";
 
 // GAME STATE STATE VARIABLES
 let currentGameRound = null;
@@ -237,6 +239,8 @@ function initSignalRConnection() {
         currentRoomCode = room.maPhong;
         currentRoomHostId = room.chuPhongId;
         isHost = room.chuPhongId === currentUser.id;
+        currentRoomMaxPlayers = room.soNguoiToiDa;
+        currentRoomLoaiPhong = room.loaiPhong;
         switchToRoomLobbyView(room);
         loadActiveRooms();
     });
@@ -245,6 +249,8 @@ function initSignalRConnection() {
         currentRoomCode = room.maPhong;
         currentRoomHostId = room.chuPhongId;
         isHost = room.chuPhongId === currentUser.id;
+        currentRoomMaxPlayers = room.soNguoiToiDa;
+        currentRoomLoaiPhong = room.loaiPhong;
         document.getElementById("matchmaking-overlay").classList.remove("active");
         switchToRoomLobbyView(room);
         loadActiveRooms();
@@ -284,6 +290,7 @@ function initSignalRConnection() {
         if (startBtn) startBtn.style.display = isHost ? "inline-block" : "none";
         if (openWorldBtn) openWorldBtn.style.display = isHost ? "inline-block" : "none";
 
+        renderRoomLockState();
         // Re-render to update the host crown icon
         renderLobbyPlayers();
     });
@@ -296,9 +303,16 @@ function initSignalRConnection() {
     });
 
     connection.on("PhongDaMoCongDong", (maxPlayers) => {
-        document.getElementById("lobby-type-text").innerText = "Ghép ngẫu nhiên (Công khai)";
-        document.getElementById("lobby-type-text").className = "text-success";
+        currentRoomMaxPlayers = maxPlayers;
+        currentRoomLoaiPhong = "GhepNgauNhien";
         showToast("Mở rộng phòng", `Phòng chờ đã mở công cộng cho mọi người cùng ghép vào!`, "success");
+        renderRoomLockState();
+        renderLobbyPlayers();
+    });
+
+    connection.on("CapNhatKhoaPhong", (loaiPhongMoi) => {
+        currentRoomLoaiPhong = loaiPhongMoi;
+        renderRoomLockState();
     });
 
     connection.on("BatDauVongChoi", (roundInfo) => {
@@ -703,7 +717,34 @@ function toggleReadyState() {
 
 function openRoomToWorld() {
     if (connection && currentRoomCode && isHost) {
-        connection.invoke("MoPhongCongDong", currentRoomCode);
+        const shouldLock = currentRoomLoaiPhong === "GhepNgauNhien";
+        connection.invoke("ThayDoiKhoaPhong", currentRoomCode, shouldLock).catch(err => console.error(err));
+    }
+}
+
+function renderRoomLockState() {
+    const lockBtn = document.getElementById("btn-open-world");
+    if (!lockBtn) return;
+
+    const isPublic = currentRoomLoaiPhong === "GhepNgauNhien";
+
+    const typeText = document.getElementById("lobby-type-text");
+    if (typeText) {
+        typeText.innerText = isPublic ? "Ghép ngẫu nhiên (Công khai)" : (currentRoomMaxPlayers <= 2 ? "Vẽ cùng bạn (Riêng tư)" : "Ghép với bạn (Riêng tư)");
+        typeText.className = isPublic ? "text-success" : "text-warning";
+    }
+
+    lockBtn.style.display = isHost ? "inline-block" : "none";
+    if (isHost) {
+        if (isPublic) {
+            lockBtn.innerHTML = `<i class="fa-solid fa-lock"></i> Khóa phòng (Riêng tư)`;
+            lockBtn.style.background = "#ff4757"; // Red color
+            lockBtn.style.borderColor = "#ff4757";
+        } else {
+            lockBtn.innerHTML = `<i class="fa-solid fa-lock-open"></i> Mở phòng (Công khai)`;
+            lockBtn.style.background = ""; // Default CSS class btn-warning
+            lockBtn.style.borderColor = "";
+        }
     }
 }
 
@@ -761,8 +802,6 @@ function switchToRoomLobbyView(room) {
     switchView("room-lobby");
 
     document.getElementById("lobby-room-code").innerText = room.maPhong;
-    document.getElementById("lobby-type-text").innerText = room.loaiPhong === "VeCungBan" ? "Vẽ cùng bạn (Riêng tư)" : "Ghép ngẫu nhiên (Công khai)";
-    document.getElementById("lobby-type-text").className = room.loaiPhong === "VeCungBan" ? "text-warning" : "text-success";
     
     // Toggle host actions
     const startBtn = document.getElementById("btn-start-game");
@@ -771,18 +810,20 @@ function switchToRoomLobbyView(room) {
 
     if (isHost) {
         startBtn.style.display = "inline-block";
-        openWorldBtn.style.display = room.loaiPhong === "VeCungBan" ? "inline-block" : "none";
+        openWorldBtn.style.display = "inline-block";
         readyBtn.style.display = "none";
     } else {
         startBtn.style.display = "none";
         openWorldBtn.style.display = "none";
         readyBtn.style.display = "inline-block";
     }
+
+    renderRoomLockState();
 }
 
 function renderLobbyPlayers() {
     const list = document.getElementById("lobby-players-list");
-    document.getElementById("lobby-player-count").innerText = `${currentRoomPlayers.length}/8`;
+    document.getElementById("lobby-player-count").innerText = `${currentRoomPlayers.length}/${currentRoomMaxPlayers}`;
 
     list.innerHTML = currentRoomPlayers.map(p => {
         const isThisUserHost = p.userId == currentRoomHostId;

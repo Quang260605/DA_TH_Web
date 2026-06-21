@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using DA_Web.Models;
 using DA_Web.Models.NguoiDungModule;
 using DA_Web.Models.PhongChoModule;
@@ -15,18 +16,23 @@ namespace DA_Web.Hubs
     public class GameHub : Hub
     {
         private readonly ApplicationDbContext _context;
+        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IHubContext<GameHub> _hubContext;
         // Quản lý ánh xạ ConnectionId -> UserId và ngược lại để theo dõi trạng thái Online
         private static readonly ConcurrentDictionary<string, int> ConnectionToUser = new();
         private static readonly ConcurrentDictionary<int, string> UserToConnection = new();
+        private static readonly ConcurrentDictionary<string, GameRoomState> ActiveGames = new();
 
         public static string? GetConnectionId(int userId)
         {
             return UserToConnection.TryGetValue(userId, out var connId) ? connId : null;
         }
 
-        public GameHub(ApplicationDbContext context)
+        public GameHub(ApplicationDbContext context, IServiceScopeFactory scopeFactory, IHubContext<GameHub> hubContext)
         {
             _context = context;
+            _scopeFactory = scopeFactory;
+            _hubContext = hubContext;
         }
 
         // Kết nối hệ thống bạn bè online
@@ -96,6 +102,8 @@ namespace DA_Web.Hubs
                     _context.Entry(room).State = EntityState.Modified;
                     _context.NguoiChoiTrongPhongs.Remove(activePlayer);
                     await _context.SaveChangesAsync();
+
+                    ActiveGames.TryRemove(room.MaPhong, out _);
 
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Room_{room.MaPhong}");
                     await Clients.Group($"Room_{room.MaPhong}").SendAsync("GameBiHuyDocDuong", userId, "Người chơi mất kết nối, game đã bị hủy.");
@@ -482,11 +490,67 @@ namespace DA_Web.Hubs
             }
 
             room.LoaiPhong = "GhepNgauNhien";
-            room.SoNguoiToiDa = 8;
+            room.SoNguoiToiDa = 12;
             _context.Entry(room).State = EntityState.Modified;
             await _context.SaveChangesAsync();
 
             await Clients.Group($"Room_{maPhong}").SendAsync("PhongDaMoCongDong", room.SoNguoiToiDa);
+
+            var danhSachNguoiChoi = await _context.NguoiChoiTrongPhongs
+                .Where(rp => rp.PhongChoId == room.Id)
+                .Include(rp => rp.NguoiDung)
+                .Select(rp => new
+                {
+                    userId = rp.NguoiDungId,
+                    tenHienThi = rp.NguoiDung!.TenHienThi,
+                    anhDaiDienUrl = rp.NguoiDung.AnhDaiDienUrl,
+                    sanSang = rp.SanSang,
+                    isChuPhong = rp.NguoiDungId == room.ChuPhongId
+                })
+                .ToListAsync();
+
+            await Clients.Group($"Room_{maPhong}").SendAsync("CapNhatPhong", maPhong, danhSachNguoiChoi);
+        }
+
+        // Thay đổi trạng thái khóa phòng (khoa: true -> khóa phòng riêng tư, khoa: false -> mở phòng công khai)
+        public async Task ThayDoiKhoaPhong(string maPhong, bool khoa)
+        {
+            var room = await _context.PhongChos
+                .FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai == "DangCho");
+
+            if (room == null)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Phòng không tồn tại hoặc đã bắt đầu chơi.");
+                return;
+            }
+
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId))
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Không tìm thấy phiên người dùng.");
+                return;
+            }
+
+            if (room.ChuPhongId != userId)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Chỉ chủ phòng mới có quyền thay đổi khóa phòng.");
+                return;
+            }
+
+            if (khoa)
+            {
+                // Khóa phòng: Chuyển về phòng riêng tư
+                room.LoaiPhong = room.SoNguoiToiDa <= 2 ? "VeCungBan" : "TroChoiMini";
+            }
+            else
+            {
+                // Mở phòng: Chuyển về phòng công khai
+                room.LoaiPhong = "GhepNgauNhien";
+            }
+
+            _context.Entry(room).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            await Clients.Group($"Room_{maPhong}").SendAsync("CapNhatKhoaPhong", room.LoaiPhong);
 
             var danhSachNguoiChoi = await _context.NguoiChoiTrongPhongs
                 .Where(rp => rp.PhongChoId == room.Id)
@@ -522,7 +586,19 @@ namespace DA_Web.Hubs
             }
         }
 
-        // ======================= MODULE 5: TRÒ CHƠI TAM SAO THẤT BẢN (GARTIC PHONE) =======================
+        // ======================= MODULE 5: TRÒ CHƠI VẼ VÀ ĐOÁN (DRAW & GUESS) =======================
+
+        private static readonly List<string> WordDatabase = new()
+        {
+            "Con mèo", "Quả táo", "Cái bàn", "Xe đạp", "Khủng long", "Phi thuyền", "Mặt trời", "Pizza", "Ngôi nhà", "Bàn chải",
+            "Cá mập", "Hoa hướng dương", "Bóng đá", "Người nhện", "Rô bốt", "Bánh sinh nhật", "Rạp xiếc", "Lâu đài", "Cây cầu", "Kim tự tháp",
+            "Khinh khí cầu", "Đàn ghi ta", "Cái ô", "Máy bay", "Tàu hỏa", "Con voi", "Con sư tử", "Cá vàng", "Con chuột", "Quả chuối",
+            "Cà rốt", "Dưa hấu", "Kem", "Bánh mì", "Xe máy", "Mũ bảo hiểm", "Kính râm", "Đồng hồ", "Điện thoại", "Quyển sách",
+            "Cây bút", "Cái ghế", "Giường ngủ", "Tivi", "Máy tính", "Quạt máy", "Đèn học", "Ba lô", "Đôi giày", "Cái thìa",
+            "Cái dĩa", "Đôi đũa", "Cái bát", "Cái cốc", "Hộp sữa", "Bóng bay", "Con cá", "Ngôi sao", "Mặt trăng", "Đám mây",
+            "Cầu vồng", "Cảnh sát", "Bác sĩ", "Học sinh", "Giáo viên", "Ca sĩ", "Phù thủy", "Công chúa", "Hoàng tử", "Siêu nhân",
+            "Quả bóng", "Cái áo", "Cái quần", "Cái mũ", "Cái kính", "Cây cối", "Bông hoa", "Con ong", "Bánh ngọt", "Cá heo"
+        };
 
         // Bắt đầu game (Chỉ chủ phòng gọi được)
         public async Task BatDauGame(string maPhong)
@@ -534,11 +610,22 @@ namespace DA_Web.Hubs
 
             var players = await _context.NguoiChoiTrongPhongs
                 .Where(rp => rp.PhongChoId == room.Id)
+                .OrderBy(rp => rp.NgayThamGia) // Sắp xếp thứ tự theo thời gian vào phòng
                 .ToListAsync();
 
             if (players.Count < 2)
             {
                 await Clients.Caller.SendAsync("LoiGame", "Cần tối thiểu 2 người chơi để bắt đầu game.");
+                return;
+            }
+
+            if (room.LoaiPhong == "VeCungBan")
+            {
+                room.TrangThai = "DangChoi";
+                _context.Entry(room).State = EntityState.Modified;
+                await _context.SaveChangesAsync();
+
+                await Clients.Group($"Room_{maPhong}").SendAsync("BatDauVeChung", maPhong);
                 return;
             }
 
@@ -551,177 +638,400 @@ namespace DA_Web.Hubs
             {
                 PhongChoId = room.Id,
                 VongHienTai = 1,
-                TongSoVong = players.Count, // Số vòng bằng số người chơi
+                TongSoVong = 4, // Tối đa 4 vòng chơi
                 NgayBatDau = DateTime.Now
             };
             _context.PhienChoiGames.Add(phienChoi);
             await _context.SaveChangesAsync();
 
-            // Khởi tạo Từ khóa gốc cho các vòng của phiên chơi
-            string[] tuKhoaMau = new[] {
-                "Con khỉ đi xe đạp",
-                "Con mèo ăn bánh ngọt",
-                "Chú chó lái phi thuyền",
-                "Người tuyết ăn lẩu nóng",
-                "Mặt trời đeo kính râm",
-                "Người ngoài hành tinh đá bóng"
+            // Khởi tạo trạng thái game room in-memory
+            var roomState = new GameRoomState
+            {
+                MaPhong = maPhong,
+                PhienChoiId = phienChoi.Id,
+                RoundNumber = 1,
+                PlayerQueue = players.Select(p => p.NguoiDungId).ToList(),
+                CurrentDrawerIndex = 0
             };
-            var random = new Random();
 
-            for (int i = 1; i <= players.Count; i++)
+            foreach (var p in players)
             {
-                var vong = new VongChoiGame
-                {
-                    PhienChoiGameId = phienChoi.Id,
-                    SoThuTuVong = i,
-                    TuKhoaGoc = tuKhoaMau[random.Next(tuKhoaMau.Length)]
-                };
-                _context.VongChoiGames.Add(vong);
+                roomState.TotalScores[p.NguoiDungId] = 0;
+                roomState.TurnScores[p.NguoiDungId] = 0;
             }
-            await _context.SaveChangesAsync();
 
-            // Bắt đầu vòng 1: Gửi từ khóa cho từng người chơi để vẽ
-            // Trong Gartic Phone, ở Vòng 1: Mỗi người chơi nhận 1 từ khóa ngẫu nhiên khác nhau
-            var danhSachVong = await _context.VongChoiGames
-                .Where(v => v.PhienChoiGameId == phienChoi.Id)
-                .ToListAsync();
+            ActiveGames[maPhong] = roomState;
 
-            for (int i = 0; i < players.Count; i++)
+            // Bắt đầu phase chọn từ khóa cho người vẽ đầu tiên
+            await StartWordSelection(roomState, _context);
+        }
+
+        private async Task StartWordSelection(GameRoomState state, ApplicationDbContext context)
+        {
+            state.IsSelectingWord = true;
+            state.IsDrawing = false;
+            state.CorrectGuessers.Clear();
+            foreach (var key in state.TurnScores.Keys.ToList())
             {
-                int pId = players[i].NguoiDungId;
-                var tuKhoa = danhSachVong[i].TuKhoaGoc;
+                state.TurnScores[key] = 0;
+            }
 
-                if (UserToConnection.TryGetValue(pId, out string? connId))
+            // Chọn 3 từ ngẫu nhiên không trùng nhau
+            var rand = new Random();
+            var choices = new List<string>();
+            while (choices.Count < 3)
+            {
+                var w = WordDatabase[rand.Next(WordDatabase.Count)];
+                if (!choices.Contains(w))
                 {
-                    await Clients.Client(connId).SendAsync("BatDauVongChoi", new
+                    choices.Add(w);
+                }
+            }
+            state.WordChoices = choices;
+            state.CurrentWord = string.Empty;
+
+            var drawerId = state.CurrentDrawerId;
+            
+            // Gửi sự kiện cho người vẽ chọn từ
+            if (UserToConnection.TryGetValue(drawerId, out string? drawerConnId))
+            {
+                await _hubContext.Clients.Client(drawerConnId).SendAsync("BanPhaiChonTuKhoa", choices, 15);
+            }
+
+            // Gửi sự kiện cho các người đoán đang đợi
+            var guesserIds = state.PlayerQueue.Where(id => id != drawerId).ToList();
+            var drawerName = await context.NguoiDungs
+                .Where(u => u.Id == drawerId)
+                .Select(u => u.TenHienThi)
+                .FirstOrDefaultAsync() ?? "Người vẽ";
+
+            foreach (var gId in guesserIds)
+            {
+                if (UserToConnection.TryGetValue(gId, out string? connId))
+                {
+                    await _hubContext.Clients.Client(connId).SendAsync("NguoiChoiDangChonTuKhoa", drawerName, drawerId, 15);
+                }
+            }
+
+            // Tự động chạy timer 15 giây chọn từ
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(15000);
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    if (ActiveGames.TryGetValue(state.MaPhong, out var s) && s.PhienChoiId == state.PhienChoiId && s.IsSelectingWord && string.IsNullOrEmpty(s.CurrentWord))
                     {
-                        gameSessionId = phienChoi.Id,
-                        roundNumber = 1,
-                        gameRoundId = danhSachVong[i].Id,
-                        loaiLuotChoi = "VeHinh", // Vòng đầu tiên luôn là Vẽ hình dựa trên từ khóa gốc
-                        noiDungNhan = tuKhoa, // Nhận từ khóa để vẽ
-                        thoiGianGiay = 60 // 60 giây để vẽ
-                    });
+                        // Tự động chọn từ đầu tiên nếu hết giờ
+                        await ExecuteWordSelection(s, s.WordChoices[0], db);
+                    }
+                }
+            });
+        }
+
+        public async Task ChonTuKhoa(string maPhong, string tuKhoa)
+        {
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId)) return;
+
+            if (ActiveGames.TryGetValue(maPhong, out var state))
+            {
+                if (state.IsSelectingWord && state.CurrentDrawerId == userId && state.WordChoices.Contains(tuKhoa))
+                {
+                    await ExecuteWordSelection(state, tuKhoa, _context);
                 }
             }
         }
 
-        // Người chơi nộp kết quả lượt chơi (được gọi khi hết giờ hoặc bấm nộp sớm)
-        public async Task NopLuotChoi(int gameRoundId, int userId, string loaiLuotChoi, string contentData, int? receivedFromTurnId)
+        private async Task ExecuteWordSelection(GameRoomState state, string tuKhoa, ApplicationDbContext context)
         {
-            var luot = new LuotChoiGame
+            state.IsSelectingWord = false;
+            state.IsDrawing = true;
+            state.CurrentWord = tuKhoa;
+            state.TurnStartTime = DateTime.Now;
+
+            // Tạo VongChoiGame trong database
+            var vong = new VongChoiGame
             {
-                VongChoiGameId = gameRoundId,
-                NguoiChoiId = userId,
-                LoaiLuotChoi = loaiLuotChoi,
-                DuLieuNoiDung = contentData,
-                LuotTruocId = receivedFromTurnId,
-                DiemDatDuoc = 10, // Điểm cố định cho mỗi lượt hoàn thành
-                NgayNop = DateTime.Now
+                PhienChoiGameId = state.PhienChoiId,
+                SoThuTuVong = (state.RoundNumber - 1) * state.PlayerQueue.Count + state.CurrentDrawerIndex + 1,
+                TuKhoaGoc = tuKhoa
             };
+            context.VongChoiGames.Add(vong);
+            await context.SaveChangesAsync();
 
-            _context.LuotChoiGames.Add(luot);
-            await _context.SaveChangesAsync();
+            state.GameRoundId = vong.Id;
 
-            // Kiểm tra xem tất cả người chơi trong phiên chơi đã nộp bài ở vòng hiện tại chưa
-            var currentRoundGame = await _context.VongChoiGames
-                .Include(v => v.PhienChoiGame)
-                .FirstOrDefaultAsync(v => v.Id == gameRoundId);
+            var drawerId = state.CurrentDrawerId;
+            var drawerName = await context.NguoiDungs
+                .Where(u => u.Id == drawerId)
+                .Select(u => u.TenHienThi)
+                .FirstOrDefaultAsync() ?? "Người vẽ";
 
-            if (currentRoundGame == null) return;
-
-            var phienChoi = currentRoundGame.PhienChoiGame!;
-            var roomPlayers = await _context.NguoiChoiTrongPhongs
-                .Where(rp => rp.PhongChoId == phienChoi.PhongChoId)
-                .Select(rp => rp.NguoiDungId)
-                .ToListAsync();
-
-            // Lấy tất cả các vòng chơi thuộc phiên chơi này
-            var allRounds = await _context.VongChoiGames
-                .Where(v => v.PhienChoiGameId == phienChoi.Id)
-                .ToListAsync();
-
-            // Tính số lượng lượt đã nộp của vòng chơi hiện tại trên toàn phiên game
-            // Trong Gartic Phone, ở Vòng R, mỗi người chơi sẽ làm 1 lượt trên 1 Vòng chơi khác nhau (luân chuyển vòng)
-            // Ví dụ: Người 1 làm Vòng 1, Người 2 làm Vòng 2 ở Round 1. Ở Round 2, Người 1 làm Vòng 2, Người 2 làm Vòng 1.
-            // Vậy tổng số lượt nộp của cả phòng ở Round R phải bằng số lượng người chơi
-            // Tính số lượng lượt đã nộp trong suốt phiên chơi từ lúc bắt đầu
-            var totalSubmits = await _context.LuotChoiGames
-                .CountAsync(l => allRounds.Select(v => v.Id).Contains(l.VongChoiGameId) && l.NgayNop >= phienChoi.NgayBatDau);
-
-            // Lấy danh sách mã phòng để phát sóng
-            var roomObj = await _context.PhongChos.FindAsync(phienChoi.PhongChoId);
-            if (roomObj == null) return;
-
-            // Nếu tất cả người chơi đã nộp lượt của vòng hiện tại
-            if (totalSubmits >= phienChoi.VongHienTai * roomPlayers.Count)
+            // Bắt đầu đếm ngược 60 giây vẽ hình cho cả phòng
+            await _hubContext.Clients.Group($"Room_{state.MaPhong}").SendAsync("BatDauLuotVe", new
             {
-                // Kiểm tra xem đã kết thúc game chưa (đạt số vòng tối đa)
-                if (phienChoi.VongHienTai >= phienChoi.TongSoVong)
+                drawerId = drawerId,
+                drawerName = drawerName,
+                gameRoundId = vong.Id,
+                tuKhoa = tuKhoa, // Client đoán sẽ ẩn đi
+                thoiGianGiay = 60
+            });
+
+            // Tự động hết giờ sau 60 giây
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(60000);
+                using (var scope = _scopeFactory.CreateScope())
                 {
-                    // Kết thúc game, tổng hợp kết quả
-                    phienChoi.NgayKetThuc = DateTime.Now;
-                    roomObj.TrangThai = "DaKetThuc";
-                    _context.Entry(phienChoi).State = EntityState.Modified;
-                    _context.Entry(roomObj).State = EntityState.Modified;
-                    await _context.SaveChangesAsync();
-
-                    // Gửi tín hiệu kết thúc game và gửi kết quả tổng hợp về
-                    await Clients.Group($"Room_{roomObj.MaPhong}").SendAsync("GameKetThuc", phienChoi.Id);
-                }
-                else
-                {
-                    // Chuyển sang vòng tiếp theo
-                    phienChoi.VongHienTai += 1;
-                    _context.Entry(phienChoi).State = EntityState.Modified;
-                    await _context.SaveChangesAsync();
-
-                    // Luân chuyển bài viết/bài vẽ:
-                    // Người chơi i sẽ nhận kết quả của người chơi (i-1) từ vòng chơi khác.
-                    // Ví dụ: Người chơi A nhận bài của Người chơi B.
-                    // Chúng ta sẽ ghép chéo lượt chơi vừa nộp ở vòng hiện tại để gửi cho người chơi tiếp theo.
-                    var luotVừaNop = await _context.LuotChoiGames
-                        .Where(l => allRounds.Select(v => v.Id).Contains(l.VongChoiGameId))
-                        .OrderByDescending(l => l.NgayNop)
-                        .Take(roomPlayers.Count)
-                        .ToListAsync();
-
-                    for (int i = 0; i < roomPlayers.Count; i++)
+                    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    if (ActiveGames.TryGetValue(state.MaPhong, out var s) && s.PhienChoiId == state.PhienChoiId && s.IsDrawing && s.GameRoundId == vong.Id)
                     {
-                        int nguoiChoiHienTai = roomPlayers[i];
-                        // Người chơi trước đó trong danh sách xoay vòng
-                        int nguoiChoiTruoc = roomPlayers[(i - 1 + roomPlayers.Count) % roomPlayers.Count];
-
-                        // Tìm lượt chơi của người chơi trước vừa nộp
-                        var luotTruoc = luotVừaNop.FirstOrDefault(l => l.NguoiChoiId == nguoiChoiTruoc);
-                        if (luotTruoc == null) continue;
-
-                        // Tìm vòng chơi mà người chơi trước vừa làm, ta chuyển vòng chơi đó cho người chơi hiện tại làm tiếp
-                        int nextGameRoundId = luotTruoc.VongChoiGameId;
-
-                        string tiepTheoLoai = luotTruoc.LoaiLuotChoi == "VeHinh" ? "DoanChu" : "VeHinh";
-                        string noiDungNhan = luotTruoc.DuLieuNoiDung; // Nếu trước vẽ hình thì nay nhận ảnh vẽ để đoán chữ, ngược lại nhận chữ để vẽ hình
-
-                        if (UserToConnection.TryGetValue(nguoiChoiHienTai, out string? connId))
-                        {
-                            await Clients.Client(connId).SendAsync("BatDauVongChoi", new
-                            {
-                                gameSessionId = phienChoi.Id,
-                                roundNumber = phienChoi.VongHienTai,
-                                gameRoundId = nextGameRoundId,
-                                loaiLuotChoi = tiepTheoLoai,
-                                noiDungNhan = noiDungNhan,
-                                receivedFromTurnId = luotTruoc.Id,
-                                thoiGianGiay = 60
-                            });
-                        }
+                        await EndTurn(s, db);
                     }
+                }
+            });
+        }
+
+        public async Task DongBoVeGame(string maPhong, string duLieuNetVe)
+        {
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId)) return;
+
+            if (ActiveGames.TryGetValue(maPhong, out var state))
+            {
+                if (state.IsDrawing && state.CurrentDrawerId == userId)
+                {
+                    await Clients.OthersInGroup($"Room_{maPhong}").SendAsync("NhanNetVeGame", duLieuNetVe);
+                }
+            }
+        }
+
+        public async Task GuiPhanDoan(string maPhong, string phanDoan)
+        {
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId)) return;
+            if (!ActiveGames.TryGetValue(maPhong, out var state)) return;
+
+            // Người vẽ không được đoán
+            if (state.CurrentDrawerId == userId) return;
+
+            // Đã đoán đúng rồi không đoán tiếp
+            if (state.CorrectGuessers.Contains(userId)) return;
+
+            var user = await _context.NguoiDungs.FindAsync(userId);
+            if (user == null) return;
+
+            string tuChuanHoa = state.CurrentWord.Trim().ToLower();
+            string phanDoanChuanHoa = phanDoan.Trim().ToLower();
+
+            if (LoaiBoDauTiengViet(tuChuanHoa) == LoaiBoDauTiengViet(phanDoanChuanHoa))
+            {
+                // Đoán đúng!
+                state.CorrectGuessers.Add(userId);
+
+                // Tính điểm: Người thứ nhất 100đ, người sau 50đ
+                int score = state.CorrectGuessers.Count == 1 ? 100 : 50;
+                state.TurnScores[userId] = score;
+                state.TotalScores[userId] += score;
+
+                // Cộng điểm người vẽ
+                state.TurnScores[state.CurrentDrawerId] += 10;
+                state.TotalScores[state.CurrentDrawerId] += 10;
+
+                await _hubContext.Clients.Group($"Room_{maPhong}").SendAsync("NguoiChoiDoanDung", new
+                {
+                    userId = userId,
+                    tenHienThi = user.TenHienThi
+                });
+
+                // Nếu tất cả đoán đúng -> Kết thúc sớm
+                int totalGuessers = state.PlayerQueue.Count - 1;
+                if (state.CorrectGuessers.Count >= totalGuessers)
+                {
+                    await EndTurn(state, _context);
                 }
             }
             else
             {
-                // Thông báo cho cả phòng biết có người vừa nộp bài để hiển thị UI chờ đợi
-                await Clients.Group($"Room_{roomObj.MaPhong}").SendAsync("NguoiChoiDaNopBai", userId);
+                // Đoán sai -> Hiện tin nhắn chat
+                await _hubContext.Clients.Group($"Room_{maPhong}").SendAsync("NhanTinNhanGame", new
+                {
+                    userId = userId,
+                    tenHienThi = user.TenHienThi,
+                    tinNhan = phanDoan
+                });
+            }
+        }
+
+        private string LoaiBoDauTiengViet(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            string[] arr1 = new string[] { "á", "à", "ả", "ã", "ạ", "â", "ấ", "ầ", "ẩ", "ẫ", "ậ", "ă", "ắ", "ằ", "ẳ", "ẵ", "ặ",
+                "đ",
+                "é","è","ẻ","ẽ","ẹ","ê","ế","ề","ể","ễ","ệ",
+                "í","ì","ỉ","ĩ","ị",
+                "ó","ò","ỏ","õ","ọ","ô","ố","ồ","ổ","ỗ","ộ","ơ","ớ","ờ","ở","ỡ","ợ",
+                "ú","ù","ủ","ũ","ụ","ư","ứ","ừ","ử","ữ","ự",
+                "ý","ỳ","ỷ","ỹ","ỵ",};
+            string[] arr2 = new string[] { "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a", "a",
+                "d",
+                "e","e","e","e","e","e","e","e","e","e","e",
+                "i","i","i","i","i",
+                "o","o","o","o","o","o","o","o","o","o","o","o","o","o","o","o","o",
+                "u","u","u","u","u","u","u","u","u","u","u",
+                "y","y","y","y","y",};
+            for (int i = 0; i < arr1.Length; i++)
+            {
+                text = text.Replace(arr1[i], arr2[i]);
+                text = text.Replace(arr1[i].ToUpper(), arr2[i].ToUpper());
+            }
+            return text;
+        }
+
+        private async Task EndTurn(GameRoomState state, ApplicationDbContext context)
+        {
+            state.IsDrawing = false;
+
+            // Lưu điểm Drawer
+            var luotDraw = new LuotChoiGame
+            {
+                VongChoiGameId = state.GameRoundId,
+                NguoiChoiId = state.CurrentDrawerId,
+                LoaiLuotChoi = "VeHinh",
+                DuLieuNoiDung = state.CurrentWord,
+                DiemDatDuoc = state.TurnScores[state.CurrentDrawerId],
+                NgayNop = DateTime.Now
+            };
+            context.LuotChoiGames.Add(luotDraw);
+
+            // Lưu các câu đoán đúng
+            foreach (var gId in state.CorrectGuessers)
+            {
+                var luotGuess = new LuotChoiGame
+                {
+                    VongChoiGameId = state.GameRoundId,
+                    NguoiChoiId = gId,
+                    LoaiLuotChoi = "DoanChu",
+                    DuLieuNoiDung = state.CurrentWord,
+                    DiemDatDuoc = state.TurnScores[gId],
+                    NgayNop = DateTime.Now
+                };
+                context.LuotChoiGames.Add(luotGuess);
+            }
+            await context.SaveChangesAsync();
+
+            // Tổng hợp bảng điểm
+            var leaderboard = new List<object>();
+            foreach (var pId in state.PlayerQueue)
+            {
+                var name = await context.NguoiDungs
+                    .Where(u => u.Id == pId)
+                    .Select(u => u.TenHienThi)
+                    .FirstOrDefaultAsync() ?? "Người chơi";
+                leaderboard.Add(new
+                {
+                    userId = pId,
+                    tenHienThi = name,
+                    diemLuotNay = state.TurnScores.GetValueOrDefault(pId, 0),
+                    tongDiem = state.TotalScores.GetValueOrDefault(pId, 0)
+                });
+            }
+
+            await _hubContext.Clients.Group($"Room_{state.MaPhong}").SendAsync("ShowKetQuaLuot", new
+            {
+                tuKhoaDung = state.CurrentWord,
+                turnScores = state.TurnScores,
+                leaderboard = leaderboard,
+                thoiGianGiay = 5
+            });
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(5000);
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    if (ActiveGames.TryGetValue(state.MaPhong, out var s) && s.PhienChoiId == state.PhienChoiId)
+                    {
+                        await NextTurn(s, db);
+                    }
+                }
+            });
+        }
+
+        private async Task NextTurn(GameRoomState state, ApplicationDbContext context)
+        {
+            state.CurrentDrawerIndex++;
+
+            if (state.CurrentDrawerIndex >= state.PlayerQueue.Count)
+            {
+                state.CurrentDrawerIndex = 0;
+                state.RoundNumber++;
+            }
+
+            if (state.RoundNumber > 4)
+            {
+                await EndGameSession(state, context);
+            }
+            else
+            {
+                await StartWordSelection(state, context);
+            }
+        }
+
+        private async Task EndGameSession(GameRoomState state, ApplicationDbContext context)
+        {
+            if (ActiveGames.TryRemove(state.MaPhong, out _))
+            {
+                var phien = await context.PhienChoiGames.FindAsync(state.PhienChoiId);
+                if (phien != null)
+                {
+                    phien.NgayKetThuc = DateTime.Now;
+                    context.Entry(phien).State = EntityState.Modified;
+                }
+
+                var room = await context.PhongChos.FirstOrDefaultAsync(p => p.MaPhong == state.MaPhong);
+                if (room != null)
+                {
+                    room.TrangThai = "DaKetThuc";
+                    context.Entry(room).State = EntityState.Modified;
+                }
+
+                foreach (var kv in state.TotalScores)
+                {
+                    var user = await context.NguoiDungs.FindAsync(kv.Key);
+                    if (user != null)
+                    {
+                        user.TongDiem += kv.Value;
+                        user.CapDoHienTai = 1 + (user.TongDiem / 1000);
+                        context.Entry(user).State = EntityState.Modified;
+                    }
+                }
+                await context.SaveChangesAsync();
+
+                var finalLeaderboard = new List<object>();
+                foreach (var pId in state.PlayerQueue)
+                {
+                    var name = await context.NguoiDungs
+                        .Where(u => u.Id == pId)
+                        .Select(u => u.TenHienThi)
+                        .FirstOrDefaultAsync() ?? "Người chơi";
+                    var avatar = await context.NguoiDungs
+                        .Where(u => u.Id == pId)
+                        .Select(u => u.AnhDaiDienUrl)
+                        .FirstOrDefaultAsync() ?? "/assets/avatars/default.png";
+                    finalLeaderboard.Add(new
+                    {
+                        userId = pId,
+                        tenHienThi = name,
+                        anhDaiDienUrl = avatar,
+                        tongDiem = state.TotalScores.GetValueOrDefault(pId, 0)
+                    });
+                }
+
+                finalLeaderboard = finalLeaderboard
+                    .OrderByDescending(x => ((dynamic)x).tongDiem)
+                    .ToList();
+
+                await _hubContext.Clients.Group($"Room_{state.MaPhong}").SendAsync("GameKetThucGameDrawGuess", finalLeaderboard);
             }
         }
 
@@ -741,4 +1051,24 @@ namespace DA_Web.Hubs
             return code;
         }
     }
+
+    public class GameRoomState
+    {
+        public string MaPhong { get; set; } = string.Empty;
+        public int PhienChoiId { get; set; }
+        public int RoundNumber { get; set; } = 1;
+        public List<int> PlayerQueue { get; set; } = new();
+        public int CurrentDrawerIndex { get; set; } = 0;
+        public int CurrentDrawerId => PlayerQueue.Count > 0 ? PlayerQueue[CurrentDrawerIndex % PlayerQueue.Count] : 0;
+        public string CurrentWord { get; set; } = string.Empty;
+        public List<string> WordChoices { get; set; } = new();
+        public HashSet<int> CorrectGuessers { get; set; } = new();
+        public Dictionary<int, int> TurnScores { get; set; } = new();
+        public Dictionary<int, int> TotalScores { get; set; } = new();
+        public bool IsSelectingWord { get; set; } = false;
+        public bool IsDrawing { get; set; } = false;
+        public int GameRoundId { get; set; }
+        public DateTime TurnStartTime { get; set; }
+    }
 }
+

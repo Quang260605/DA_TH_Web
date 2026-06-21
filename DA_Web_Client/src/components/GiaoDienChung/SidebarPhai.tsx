@@ -180,7 +180,7 @@ export const SidebarPhai: React.FC<SidebarPhaiProps> = ({ userId, connection, on
       fetchFriendRequests();
     });
 
-    connection.on('XacNhanDongYKetBan', (friendId: number) => {
+    connection.on('XacNhanDongYKetBan', (_friendId: number) => {
       fetchFriends();
       fetchLeaderboard();
       fetchFriendRequests();
@@ -531,28 +531,7 @@ export const SidebarPhai: React.FC<SidebarPhaiProps> = ({ userId, connection, on
                       </div>
                     </div>
 
-                    {/* Mời vẽ chung khi đang ở giao diện vẽ */}
-                    {dangVeId && friend.online && onMoiVeChung && (
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onMoiVeChung(friend.id, dangVeId);
-                        }}
-                        style={{
-                          background: 'var(--color-primary)',
-                          color: 'white',
-                          border: '2px solid #2c3e50',
-                          borderRadius: '12px',
-                          padding: '4px 8px',
-                          fontSize: '0.75rem',
-                          fontWeight: 'bold',
-                          cursor: 'pointer',
-                          fontFamily: 'var(--font-kids)',
-                          boxShadow: '0 2px 0 #d63031'
-                        }}>
-                        Mời vẽ
-                      </button>
-                    )}
+
                   </div>
                 ))}
               </div>
