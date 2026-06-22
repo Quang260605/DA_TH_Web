@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { HubConnection } from '@microsoft/signalr';
-import { Users, Play, Send, Clock, CheckCircle2, RotateCcw, Trash2, Trophy, ArrowRight } from 'lucide-react';
+import { Users, Play, Send, Clock, CheckCircle2, RotateCcw, Trash2, Trophy, ArrowRight, Search, Settings } from 'lucide-react';
 
 interface TroChoiTamSaoThatBanProps {
   userId: number;
@@ -27,6 +27,26 @@ interface ChatMessage {
   isCorrect?: boolean;
 }
 
+interface GameSettingsState {
+  tongSoVong: number;
+  thoiGianVeGiay: number;
+  thoiGianChonTuGiay?: number;
+  thoiGianKetQuaGiay?: number;
+}
+
+interface GameProgress {
+  roundNumber: number;
+  totalRounds: number;
+  turnNumber: number;
+  totalTurns: number;
+}
+
+interface SavedRoom {
+  maPhong: string;
+  loaiPhong: string;
+  savedAt: number;
+}
+
 export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({ 
   userId, 
   tenHienThi, 
@@ -43,6 +63,18 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   const [isReady, setIsReady] = useState(false);
   const [currentLoaiPhong, setCurrentLoaiPhong] = useState<string>(loaiPhong || 'TroChoiMini');
   const [maxPlayers, setMaxPlayers] = useState<number>(8);
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [settings, setSettings] = useState<GameSettingsState>({ tongSoVong: 4, thoiGianVeGiay: 60 });
+  const [gameProgress, setGameProgress] = useState<GameProgress>({ roundNumber: 1, totalRounds: 4, turnNumber: 1, totalTurns: 1 });
+  const savedRoomKey = `draw_with_me_active_room_${userId}`;
+  const [savedRoom, setSavedRoom] = useState<SavedRoom | null>(() => {
+    try {
+      const raw = localStorage.getItem(`draw_with_me_active_room_${userId}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [timeLeft, setTimeLeft] = useState(60);
   const [doanChuInput, setDoanChuInput] = useState('');
@@ -75,6 +107,17 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   const lastInitializedRoomRef = useRef<string | null>(null);
   const hasExitedRef = useRef(false);
 
+  const rememberRoom = (roomCode: string, roomType: string) => {
+    const next = { maPhong: roomCode, loaiPhong: roomType, savedAt: Date.now() };
+    localStorage.setItem(savedRoomKey, JSON.stringify(next));
+    setSavedRoom(next);
+  };
+
+  const forgetRoom = () => {
+    localStorage.removeItem(savedRoomKey);
+    setSavedRoom(null);
+  };
+
   // Exit Room
   const handleThoatPhong = async () => {
     hasExitedRef.current = true;
@@ -85,6 +128,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
         console.error("Lỗi khi thoát phòng:", err);
       }
     }
+    forgetRoom();
     if (onClose) onClose();
   };
 
@@ -104,6 +148,8 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setIsChuPhong(data.chuPhongId === userId);
       setCurrentLoaiPhong(data.loaiPhong);
       setMaxPlayers(data.soNguoiToiDa);
+      if (data.settings) setSettings(data.settings);
+      rememberRoom(data.maPhong, data.loaiPhong);
       setRoomPlayers([{ userId, tenHienThi, anhDaiDienUrl: '/assets/avatars/default.png', sanSang: true, isChuPhong: true }]);
     };
 
@@ -113,6 +159,8 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setIsChuPhong(data.chuPhongId === userId);
       setCurrentLoaiPhong(data.loaiPhong);
       setMaxPlayers(data.soNguoiToiDa);
+      if (data.settings) setSettings(data.settings);
+      rememberRoom(data.maPhong, data.loaiPhong);
     };
 
     const handlePhongDaMoCongDong = (maxPlayersLimit: number) => {
@@ -128,6 +176,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setMaPhong(roomCode);
       if (onRoomCodeChange) onRoomCodeChange(roomCode);
       setRoomPlayers(players);
+      if (roomCode) rememberRoom(roomCode, currentLoaiPhong);
       const me = players.find(p => p.userId === userId);
       if (me) {
         setIsReady(me.sanSang);
@@ -146,12 +195,15 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
 
     const handleBiKickKhoiPhong = () => {
       alert("Bạn đã bị chủ phòng mời ra khỏi phòng chơi.");
+      forgetRoom();
       if (onClose) onClose();
     };
 
     const handleLoiPhong = (message: string) => {
       alert("Lỗi phòng: " + message);
-      if (onClose) onClose();
+      if (!maPhong) {
+        forgetRoom();
+      }
     };
 
     const handleLoiGame = (message: string) => {
@@ -160,6 +212,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
 
     const handleGameBiHuyDocDuong = (_thoatUserId: number, message: string) => {
       alert(message);
+      forgetRoom();
       if (onClose) onClose();
     };
 
@@ -168,10 +221,15 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       if (uId === userId) setIsReady(ready);
     };
 
+    const handleCaiDatPhongCapNhat = (nextSettings: GameSettingsState) => {
+      setSettings(nextSettings);
+    };
+
     // Draw and Guess Specific Listeners
-    const handleBanPhaiChonTuKhoa = (wordChoices: string[], time: number) => {
+    const handleBanPhaiChonTuKhoa = (wordChoices: string[], time: number, progress?: GameProgress) => {
       setChoices(wordChoices);
       setTimeLeft(time);
+      if (progress) setGameProgress(progress);
       setGameState('word_selection');
       setGuessedCorrectly(false);
       setCorrectGuessers([]);
@@ -180,10 +238,11 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setDrawerName(tenHienThi);
     };
 
-    const handleNguoiChoiDangChonTuKhoa = (name: string, drId: number, time: number) => {
+    const handleNguoiChoiDangChonTuKhoa = (name: string, drId: number, time: number, progress?: GameProgress) => {
       setDrawerName(name);
       setDrawerId(drId);
       setTimeLeft(time);
+      if (progress) setGameProgress(progress);
       setGameState('word_selection');
       setGuessedCorrectly(false);
       setCorrectGuessers([]);
@@ -195,6 +254,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setDrawerName(data.drawerName);
       setChosenWord(data.tuKhoa);
       setTimeLeft(data.thoiGianGiay);
+      if (data.progress) setGameProgress(data.progress);
       setGameState('playing');
       
       // Clear local canvas
@@ -275,6 +335,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setCorrectWord(data.tuKhoaDung);
       setLeaderboard(data.leaderboard);
       setTimeLeft(data.thoiGianGiay);
+      if (data.progress) setGameProgress(data.progress);
       setGameState('turn_results');
     };
 
@@ -295,6 +356,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
     connection.on('LoiGame', handleLoiGame);
     connection.on('GameBiHuyDocDuong', handleGameBiHuyDocDuong);
     connection.on('NguoiChoiThayDoiSanSang', handleNguoiChoiThayDoiSanSang);
+    connection.on('CaiDatPhongCapNhat', handleCaiDatPhongCapNhat);
     connection.on('BanPhaiChonTuKhoa', handleBanPhaiChonTuKhoa);
     connection.on('NguoiChoiDangChonTuKhoa', handleNguoiChoiDangChonTuKhoa);
     connection.on('BatDauLuotVe', handleBatDauLuotVe);
@@ -317,6 +379,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       connection.off('LoiGame', handleLoiGame);
       connection.off('GameBiHuyDocDuong', handleGameBiHuyDocDuong);
       connection.off('NguoiChoiThayDoiSanSang', handleNguoiChoiThayDoiSanSang);
+      connection.off('CaiDatPhongCapNhat', handleCaiDatPhongCapNhat);
       connection.off('BanPhaiChonTuKhoa', handleBanPhaiChonTuKhoa);
       connection.off('NguoiChoiDangChonTuKhoa', handleNguoiChoiDangChonTuKhoa);
       connection.off('BatDauLuotVe', handleBatDauLuotVe);
@@ -331,8 +394,9 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   // Handle auto-match or room creation logic
   useEffect(() => {
     if (!connection) return;
+    if (!maPhongInit && !loaiPhong) return;
 
-    const initKey = maPhongInit ? `join_${maPhongInit}` : loaiPhong ? `match_${loaiPhong}` : `create_mini`;
+    const initKey = maPhongInit ? `join_${maPhongInit}` : `match_${loaiPhong}`;
     if (lastInitializedRoomRef.current === initKey) return;
     lastInitializedRoomRef.current = initKey;
 
@@ -357,6 +421,35 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   }, [timeLeft, gameState]);
 
   // Drawer word selection action
+  const handleJoinByCode = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const code = joinCodeInput.trim().toUpperCase();
+    if (!connection || !code) return;
+    lastInitializedRoomRef.current = `join_${code}`;
+    connection.invoke('ThamGiaPhong', code, userId).catch(err => console.error(err));
+  };
+
+  const handleCreatePrivateRoom = (roomType: 'TroChoiMini' | 'VeCungBan') => {
+    if (!connection) return;
+    lastInitializedRoomRef.current = `manual_${roomType}_${Date.now()}`;
+    connection.invoke('TaoPhong', userId, roomType).catch(err => console.error(err));
+  };
+
+  const handleResumeRoom = () => {
+    if (!connection || !savedRoom) return;
+    setJoinCodeInput(savedRoom.maPhong);
+    lastInitializedRoomRef.current = `resume_${savedRoom.maPhong}_${Date.now()}`;
+    connection.invoke('ThamGiaPhong', savedRoom.maPhong, userId).catch(err => console.error(err));
+  };
+
+  const handleSettingsChange = (next: GameSettingsState) => {
+    setSettings(next);
+    if (connection && maPhong && isChuPhong) {
+      connection.invoke('CapNhatCaiDatPhong', maPhong, next.tongSoVong, next.thoiGianVeGiay)
+        .catch(err => console.error(err));
+    }
+  };
+
   const handleSelectWord = (word: string) => {
     if (!connection || !maPhong) return;
     connection.invoke('ChonTuKhoa', maPhong, word).catch(err => console.error(err));
@@ -521,11 +614,101 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
     });
   }, [allPlayersReady, roomPlayers, userId]);
 
+  const renderRoundProgress = () => (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '8px',
+      background: '#f8fafc',
+      border: '2px solid #2c3e50',
+      borderRadius: '999px',
+      padding: '6px 14px',
+      fontWeight: 'bold',
+      color: '#2c3e50',
+      boxShadow: '0 3px 0 rgba(44, 62, 80, 0.15)'
+    }}>
+      <Trophy size={16} />
+      Vong {gameProgress.roundNumber}/{gameProgress.totalRounds} - Luot {gameProgress.turnNumber}/{gameProgress.totalTurns}
+    </div>
+  );
+
   return (
     <div style={{ width: '100%', maxWidth: '850px', margin: '0 auto' }}>
+      {gameState === 'lobby' && !maPhong && (
+        <div className="bubble-card" style={{ background: 'white', padding: '28px', border: '3px solid #2c3e50' }}>
+          <h2 className="title-kids">Vào phòng chơi</h2>
+
+          {savedRoom && (
+            <div style={{
+              margin: '18px auto',
+              padding: '14px 16px',
+              border: '2px solid #2c3e50',
+              borderRadius: '16px',
+              background: '#fff9db',
+              maxWidth: '520px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '12px',
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ fontWeight: 'bold', color: '#2c3e50' }}>
+                Phòng đang lưu: {savedRoom.maPhong} ({savedRoom.loaiPhong === 'VeCungBan' ? 'Vẽ cùng bạn' : 'Trò chơi'})
+              </div>
+              <button onClick={handleResumeRoom} className="btn-bubble btn-yellow" style={{ padding: '8px 14px' }}>
+                Tiếp tục phòng
+              </button>
+            </div>
+          )}
+
+          <form onSubmit={handleJoinByCode} style={{ display: 'flex', gap: '10px', justifyContent: 'center', margin: '22px auto', maxWidth: '520px' }}>
+            <input
+              value={joinCodeInput}
+              onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+              placeholder="Nhập mã phòng..."
+              maxLength={8}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: '12px 14px',
+                border: '3px solid #2c3e50',
+                borderRadius: '14px',
+                fontWeight: 'bold',
+                fontFamily: 'var(--font-kids)',
+                outline: 'none',
+                textTransform: 'uppercase'
+              }}
+            />
+            <button type="submit" className="btn-bubble btn-blue" style={{ padding: '10px 16px' }}>
+              <Search size={18} />
+              Tìm phòng
+            </button>
+          </form>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginTop: '24px' }}>
+            <button onClick={() => handleCreatePrivateRoom('TroChoiMini')} className="btn-bubble btn-pink" style={{ justifyContent: 'center', padding: '18px' }}>
+              <Play size={22} />
+              Tạo phòng chơi
+            </button>
+            <button onClick={() => handleCreatePrivateRoom('VeCungBan')} className="btn-bubble btn-green" style={{ justifyContent: 'center', padding: '18px' }}>
+              <Users size={22} />
+              Tạo phòng vẽ bạn bè
+            </button>
+          </div>
+
+          {onClose && (
+            <button
+              onClick={onClose}
+              style={{ marginTop: '22px', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline' }}
+            >
+              Quay lại trang chủ
+            </button>
+          )}
+        </div>
+      )}
       
       {/* 1. LOBBY STATE */}
-      {gameState === 'lobby' && (
+      {gameState === 'lobby' && maPhong && (
         <div className="bubble-card" style={{ background: 'white', padding: '24px', border: '3px solid #2c3e50' }}>
           <h2 className="title-kids">Phòng chờ Vẽ & Đoán</h2>
           
@@ -551,6 +734,68 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
           <div style={{ textAlign: 'center', fontSize: '1rem', color: '#64748b', fontWeight: 'bold', marginBottom: '20px' }}>
             Trạng thái: {currentLoaiPhong === 'GhepNgauNhien' ? 'Công khai (Toàn server)' : 'Riêng tư (Chờ kết nối)'} ({roomPlayers.length}/{maxPlayers} người)
           </div>
+
+          {currentLoaiPhong === 'VeCungBan' && roomPlayers.length > 0 && (
+            <div style={{
+              textAlign: 'center',
+              background: '#f0fdf4',
+              border: '2px solid #2c3e50',
+              borderRadius: '14px',
+              padding: '10px 14px',
+              margin: '0 auto 18px auto',
+              maxWidth: '560px',
+              fontWeight: 'bold',
+              color: '#166534'
+            }}>
+              Dang ve cung: {roomPlayers.map(p => p.userId === userId ? `${p.tenHienThi} (Ban)` : p.tenHienThi).join(' va ')}
+            </div>
+          )}
+
+          {currentLoaiPhong !== 'VeCungBan' && (
+            <div style={{
+              border: '2px solid #2c3e50',
+              borderRadius: '16px',
+              padding: '14px',
+              marginBottom: '20px',
+              background: '#f8fafc'
+            }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 12px 0', fontSize: '1rem', color: '#2c3e50' }}>
+                <Settings size={18} />
+                Cai dat tran dau
+              </h3>
+              {isChuPhong ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
+                  <label style={{ fontWeight: 'bold', color: '#475569' }}>
+                    So vong: {settings.tongSoVong}
+                    <input
+                      type="range"
+                      min="1"
+                      max="6"
+                      value={settings.tongSoVong}
+                      onChange={(e) => handleSettingsChange({ ...settings, tongSoVong: Number(e.target.value) })}
+                      style={{ width: '100%', accentColor: '#ff6b81' }}
+                    />
+                  </label>
+                  <label style={{ fontWeight: 'bold', color: '#475569' }}>
+                    Thoi gian ve: {settings.thoiGianVeGiay}s
+                    <input
+                      type="range"
+                      min="30"
+                      max="120"
+                      step="15"
+                      value={settings.thoiGianVeGiay}
+                      onChange={(e) => handleSettingsChange({ ...settings, thoiGianVeGiay: Number(e.target.value) })}
+                      style={{ width: '100%', accentColor: '#70a1ff' }}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div style={{ fontWeight: 'bold', color: '#64748b' }}>
+                  {settings.tongSoVong} vong, {settings.thoiGianVeGiay}s moi luot ve
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '30px', marginTop: '10px', justifyContent: 'center' }}>
             <div style={{ flex: 1, minWidth: '280px' }}>
@@ -667,6 +912,9 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
             <Clock size={24} />
             <span>Còn lại: {timeLeft} giây</span>
           </div>
+          <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+            {renderRoundProgress()}
+          </div>
 
           {userId === drawerId ? (
             <div>
@@ -708,6 +956,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
               <div style={{ background: 'var(--color-primary)', color: 'white', border: '2px solid #2c3e50', borderRadius: '12px', padding: '4px 12px', fontWeight: 'bold', fontFamily: 'var(--font-kids)' }}>
                 HỌA SĨ: {drawerName} {userId === drawerId && "(Bạn)"}
               </div>
+              {renderRoundProgress()}
             </div>
 
             <div style={{
@@ -919,6 +1168,9 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       {/* 4. TURN RESULTS STATE */}
       {gameState === 'turn_results' && (
         <div className="bubble-card" style={{ background: 'white', padding: '30px', border: '3px solid #2c3e50', textAlign: 'center' }}>
+          <div style={{ marginBottom: '18px' }}>
+            {renderRoundProgress()}
+          </div>
           <h2 className="title-kids" style={{ fontSize: '2.5rem', color: '#16a34a' }}>Hết giờ vẽ rồi!</h2>
           <div style={{ fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '24px' }}>
             Từ khóa chính xác là: <strong style={{ color: '#ff4757', fontSize: '1.6rem' }}>"{correctWord}"</strong>

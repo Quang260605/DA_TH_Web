@@ -34,6 +34,7 @@ function App() {
   const [gameRoomCode, setGameRoomCode] = useState<string | undefined>(undefined);
   const [currentRoomCode, setCurrentRoomCode] = useState<string | undefined>(undefined);
   const [matchType, setMatchType] = useState<'GhepNgauNhien' | 'VeCungBan' | 'TroChoiMini'>('TroChoiMini');
+  const [autoStartGameRoom, setAutoStartGameRoom] = useState(false);
 
   const [notifications, setNotifications] = useState<{
     id: string;
@@ -216,6 +217,7 @@ function App() {
   const handleStartMatching = (loaiPhong: 'GhepNgauNhien' | 'VeCungBan') => {
     // Chuyển sang tab Game và kích hoạt ghép phòng
     setMatchType(loaiPhong);
+    setAutoStartGameRoom(true);
     setActiveTab('Game');
     setGameRoomCode(undefined); // Để TroChoi tự sinh hoặc ghép phòng
   };
@@ -606,6 +608,7 @@ function App() {
                   if (notif.type === 'game' && notif.roomCode) {
                     setGameRoomCode(notif.roomCode);
                     setMatchType('VeCungBan');
+                    setAutoStartGameRoom(true);
                     setActiveTab('Game');
                   } else if (notif.type === 'draw' && notif.banVeId) {
                     setDangVeId(notif.banVeId);
@@ -767,6 +770,7 @@ function App() {
             <button 
               onClick={() => {
                 setActiveTab('Game');
+                setAutoStartGameRoom(false);
                 setGameRoomCode(undefined);
               }}
               style={{
@@ -831,7 +835,7 @@ function App() {
               tenHienThi={user.tenHienThi} 
               connection={connection} 
               maPhongInit={gameRoomCode}
-              loaiPhong={matchType}
+              loaiPhong={autoStartGameRoom ? matchType : undefined}
               onRoomCodeChange={(code) => setGameRoomCode(code)}
               onClose={() => {
                 setGameRoomCode(undefined);

@@ -22,6 +22,7 @@ namespace DA_Web.Hubs
         private static readonly ConcurrentDictionary<string, int> ConnectionToUser = new();
         private static readonly ConcurrentDictionary<int, string> UserToConnection = new();
         private static readonly ConcurrentDictionary<string, GameRoomState> ActiveGames = new();
+        private static readonly ConcurrentDictionary<string, GameSettings> RoomSettings = new();
 
         public static string? GetConnectionId(int userId)
         {
@@ -246,7 +247,7 @@ namespace DA_Web.Hubs
                 ChuPhongId = userId,
                 LoaiPhong = loaiPhong,
                 TrangThai = "DangCho",
-                SoNguoiToiDa = (loaiPhong == "TroChoiMini" || loaiPhong == "GhepNgauNhien") ? 8 : 2,
+                SoNguoiToiDa = (loaiPhong == "TroChoiMini" || loaiPhong == "GhepNgauNhien") ? 12 : 2,
                 NgayTao = DateTime.Now
             };
 
@@ -265,6 +266,7 @@ namespace DA_Web.Hubs
             await _context.SaveChangesAsync();
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"Room_{maPhong}");
+            RoomSettings[maPhong] = GameSettings.Default;
 
             await Clients.Caller.SendAsync("RoomCreated", new
             {
@@ -272,7 +274,9 @@ namespace DA_Web.Hubs
                 maPhong = phong.MaPhong,
                 chuPhongId = phong.ChuPhongId,
                 loaiPhong = phong.LoaiPhong,
-                soNguoiToiDa = phong.SoNguoiToiDa
+                soNguoiToiDa = phong.SoNguoiToiDa,
+                trangThai = phong.TrangThai,
+                settings = RoomSettings[maPhong]
             });
         }
 
@@ -309,8 +313,9 @@ namespace DA_Web.Hubs
         // Tham gia phòng bằng mã phòng
         public async Task ThamGiaPhong(string maPhong, int userId)
         {
+            maPhong = maPhong.Trim().ToUpperInvariant();
             var phong = await _context.PhongChos
-                .FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai == "DangCho");
+                .FirstOrDefaultAsync(p => p.MaPhong == maPhong && (p.TrangThai == "DangCho" || p.TrangThai == "DangChoi"));
 
             if (phong == null)
             {
@@ -318,8 +323,17 @@ namespace DA_Web.Hubs
                 return;
             }
 
+            var daTrongPhong = await _context.NguoiChoiTrongPhongs
+                .AnyAsync(rp => rp.PhongChoId == phong.Id && rp.NguoiDungId == userId);
+
+            if (phong.TrangThai == "DangChoi" && !daTrongPhong)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Phòng đã bắt đầu chơi, bạn không thể tham gia mới.");
+                return;
+            }
+
             var soLuongHienTai = await _context.NguoiChoiTrongPhongs.CountAsync(rp => rp.PhongChoId == phong.Id);
-            if (soLuongHienTai >= phong.SoNguoiToiDa)
+            if (!daTrongPhong && soLuongHienTai >= phong.SoNguoiToiDa)
             {
                 await Clients.Caller.SendAsync("LoiPhong", "Phòng đã đầy người chơi.");
                 return;
@@ -328,9 +342,6 @@ namespace DA_Web.Hubs
             await RemoveUserFromAllRooms(userId, phong.MaPhong);
 
             // Kiểm tra xem đã trong phòng chưa
-            var daTrongPhong = await _context.NguoiChoiTrongPhongs
-                .AnyAsync(rp => rp.PhongChoId == phong.Id && rp.NguoiDungId == userId);
-
             if (!daTrongPhong)
             {
                 var nguoiChoi = new NguoiChoiTrongPhong
@@ -345,6 +356,7 @@ namespace DA_Web.Hubs
             }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"Room_{maPhong}");
+            var settings = RoomSettings.GetOrAdd(maPhong, GameSettings.Default);
 
             var danhSachNguoiChoi = await _context.NguoiChoiTrongPhongs
                 .Where(rp => rp.PhongChoId == phong.Id)
@@ -369,8 +381,38 @@ namespace DA_Web.Hubs
                 maPhong = phong.MaPhong,
                 chuPhongId = phong.ChuPhongId,
                 loaiPhong = phong.LoaiPhong,
-                soNguoiToiDa = phong.SoNguoiToiDa
+                soNguoiToiDa = phong.SoNguoiToiDa,
+                trangThai = phong.TrangThai,
+                settings = settings
             });
+        }
+
+        public async Task CapNhatCaiDatPhong(string maPhong, int tongSoVong, int thoiGianVeGiay)
+        {
+            maPhong = maPhong.Trim().ToUpperInvariant();
+            var room = await _context.PhongChos.FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai == "DangCho");
+            if (room == null)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Phòng không tồn tại hoặc đã bắt đầu chơi.");
+                return;
+            }
+
+            if (!ConnectionToUser.TryGetValue(Context.ConnectionId, out int userId) || room.ChuPhongId != userId)
+            {
+                await Clients.Caller.SendAsync("LoiPhong", "Chỉ chủ phòng mới có quyền thay đổi cài đặt.");
+                return;
+            }
+
+            var settings = new GameSettings
+            {
+                TongSoVong = Math.Clamp(tongSoVong, 1, 6),
+                ThoiGianVeGiay = Math.Clamp(thoiGianVeGiay, 30, 120),
+                ThoiGianChonTuGiay = GameSettings.Default.ThoiGianChonTuGiay,
+                ThoiGianKetQuaGiay = GameSettings.Default.ThoiGianKetQuaGiay
+            };
+
+            RoomSettings[maPhong] = settings;
+            await Clients.Group($"Room_{maPhong}").SendAsync("CaiDatPhongCapNhat", settings);
         }
 
         // Thoát phòng chủ động
@@ -612,6 +654,7 @@ namespace DA_Web.Hubs
                 .Where(rp => rp.PhongChoId == room.Id)
                 .OrderBy(rp => rp.NgayThamGia) // Sắp xếp thứ tự theo thời gian vào phòng
                 .ToListAsync();
+            var settings = RoomSettings.GetOrAdd(maPhong, GameSettings.Default);
 
             if (players.Count < 2)
             {
@@ -638,7 +681,7 @@ namespace DA_Web.Hubs
             {
                 PhongChoId = room.Id,
                 VongHienTai = 1,
-                TongSoVong = 4, // Tối đa 4 vòng chơi
+                TongSoVong = settings.TongSoVong,
                 NgayBatDau = DateTime.Now
             };
             _context.PhienChoiGames.Add(phienChoi);
@@ -650,6 +693,10 @@ namespace DA_Web.Hubs
                 MaPhong = maPhong,
                 PhienChoiId = phienChoi.Id,
                 RoundNumber = 1,
+                TotalRounds = settings.TongSoVong,
+                DrawSeconds = settings.ThoiGianVeGiay,
+                WordChoiceSeconds = settings.ThoiGianChonTuGiay,
+                ResultSeconds = settings.ThoiGianKetQuaGiay,
                 PlayerQueue = players.Select(p => p.NguoiDungId).ToList(),
                 CurrentDrawerIndex = 0
             };
@@ -691,11 +738,12 @@ namespace DA_Web.Hubs
             state.CurrentWord = string.Empty;
 
             var drawerId = state.CurrentDrawerId;
+            var progress = state.GetProgress();
             
             // Gửi sự kiện cho người vẽ chọn từ
             if (UserToConnection.TryGetValue(drawerId, out string? drawerConnId))
             {
-                await _hubContext.Clients.Client(drawerConnId).SendAsync("BanPhaiChonTuKhoa", choices, 15);
+                await _hubContext.Clients.Client(drawerConnId).SendAsync("BanPhaiChonTuKhoa", choices, state.WordChoiceSeconds, progress);
             }
 
             // Gửi sự kiện cho các người đoán đang đợi
@@ -704,19 +752,18 @@ namespace DA_Web.Hubs
                 .Where(u => u.Id == drawerId)
                 .Select(u => u.TenHienThi)
                 .FirstOrDefaultAsync() ?? "Người vẽ";
-
             foreach (var gId in guesserIds)
             {
                 if (UserToConnection.TryGetValue(gId, out string? connId))
                 {
-                    await _hubContext.Clients.Client(connId).SendAsync("NguoiChoiDangChonTuKhoa", drawerName, drawerId, 15);
+                    await _hubContext.Clients.Client(connId).SendAsync("NguoiChoiDangChonTuKhoa", drawerName, drawerId, state.WordChoiceSeconds, progress);
                 }
             }
 
             // Tự động chạy timer 15 giây chọn từ
             _ = Task.Run(async () =>
             {
-                await Task.Delay(15000);
+                await Task.Delay(state.WordChoiceSeconds * 1000);
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -766,6 +813,7 @@ namespace DA_Web.Hubs
                 .Where(u => u.Id == drawerId)
                 .Select(u => u.TenHienThi)
                 .FirstOrDefaultAsync() ?? "Người vẽ";
+            var progress = state.GetProgress();
 
             // Bắt đầu đếm ngược 60 giây vẽ hình cho cả phòng
             await _hubContext.Clients.Group($"Room_{state.MaPhong}").SendAsync("BatDauLuotVe", new
@@ -774,13 +822,14 @@ namespace DA_Web.Hubs
                 drawerName = drawerName,
                 gameRoundId = vong.Id,
                 tuKhoa = tuKhoa, // Client đoán sẽ ẩn đi
-                thoiGianGiay = 60
+                thoiGianGiay = state.DrawSeconds,
+                progress = progress
             });
 
             // Tự động hết giờ sau 60 giây
             _ = Task.Run(async () =>
             {
-                await Task.Delay(60000);
+                await Task.Delay(state.DrawSeconds * 1000);
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -940,12 +989,13 @@ namespace DA_Web.Hubs
                 tuKhoaDung = state.CurrentWord,
                 turnScores = state.TurnScores,
                 leaderboard = leaderboard,
-                thoiGianGiay = 5
+                thoiGianGiay = state.ResultSeconds,
+                progress = state.GetProgress()
             });
 
             _ = Task.Run(async () =>
             {
-                await Task.Delay(5000);
+                await Task.Delay(state.ResultSeconds * 1000);
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -967,7 +1017,7 @@ namespace DA_Web.Hubs
                 state.RoundNumber++;
             }
 
-            if (state.RoundNumber > 4)
+            if (state.RoundNumber > state.TotalRounds)
             {
                 await EndGameSession(state, context);
             }
@@ -994,6 +1044,7 @@ namespace DA_Web.Hubs
                     room.TrangThai = "DaKetThuc";
                     context.Entry(room).State = EntityState.Modified;
                 }
+                RoomSettings.TryRemove(state.MaPhong, out _);
 
                 foreach (var kv in state.TotalScores)
                 {
@@ -1057,6 +1108,10 @@ namespace DA_Web.Hubs
         public string MaPhong { get; set; } = string.Empty;
         public int PhienChoiId { get; set; }
         public int RoundNumber { get; set; } = 1;
+        public int TotalRounds { get; set; } = 4;
+        public int DrawSeconds { get; set; } = 60;
+        public int WordChoiceSeconds { get; set; } = 15;
+        public int ResultSeconds { get; set; } = 5;
         public List<int> PlayerQueue { get; set; } = new();
         public int CurrentDrawerIndex { get; set; } = 0;
         public int CurrentDrawerId => PlayerQueue.Count > 0 ? PlayerQueue[CurrentDrawerIndex % PlayerQueue.Count] : 0;
@@ -1069,6 +1124,32 @@ namespace DA_Web.Hubs
         public bool IsDrawing { get; set; } = false;
         public int GameRoundId { get; set; }
         public DateTime TurnStartTime { get; set; }
+
+        public object GetProgress()
+        {
+            return new
+            {
+                roundNumber = RoundNumber,
+                totalRounds = TotalRounds,
+                turnNumber = CurrentDrawerIndex + 1,
+                totalTurns = PlayerQueue.Count
+            };
+        }
+    }
+
+    public class GameSettings
+    {
+        public int TongSoVong { get; set; } = 4;
+        public int ThoiGianVeGiay { get; set; } = 60;
+        public int ThoiGianChonTuGiay { get; set; } = 15;
+        public int ThoiGianKetQuaGiay { get; set; } = 5;
+
+        public static GameSettings Default => new()
+        {
+            TongSoVong = 4,
+            ThoiGianVeGiay = 60,
+            ThoiGianChonTuGiay = 15,
+            ThoiGianKetQuaGiay = 5
+        };
     }
 }
-
