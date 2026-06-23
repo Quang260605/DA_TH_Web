@@ -162,7 +162,7 @@ function App() {
           });
 
           // Lắng nghe phòng bị hủy dọc đường (mất kết nối)
-          newConnection.on('GameBiHuyDocDuong', (uId: number, message: string) => {
+          newConnection.on('GameBiHuyDocDuong', (_uId: number, message: string) => {
             console.log("Nhận sự kiện GameBiHuyDocDuong:", message);
             alert(message);
             setGameRoomCode(undefined);

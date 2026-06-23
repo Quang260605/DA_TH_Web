@@ -97,15 +97,65 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const lastPos = useRef({ x: 0, y: 0 });
   const [strokes, setStrokes] = useState<any[][]>([]);
+  const strokesRef = useRef<any[][]>([]);
+  const maPhongRef = useRef<string>(maPhong);
+  const isDrawingRef = useRef(false);
   const currentStroke = useRef<any[]>([]);
   
   // Guesser Synced Strokes
   const guesserStrokes = useRef<any[][]>([]);
   const currentGuesserStroke = useRef<any[]>([]);
-
+  
   // Refs
   const lastInitializedRoomRef = useRef<string | null>(null);
   const hasExitedRef = useRef(false);
+
+  useEffect(() => {
+    strokesRef.current = strokes;
+  }, [strokes]);
+
+  useEffect(() => {
+    maPhongRef.current = maPhong;
+  }, [maPhong]);
+
+  useEffect(() => {
+    isDrawingRef.current = isDrawing;
+  }, [isDrawing]);
+
+  const finishCurrentStroke = () => {
+    if (!isDrawingRef.current || userId !== drawerId) return;
+    if (currentStroke.current.length === 0) {
+      isDrawingRef.current = false;
+      setIsDrawing(false);
+      return;
+    }
+
+    const nextStrokes = [...strokesRef.current, currentStroke.current];
+    currentStroke.current = [];
+    isDrawingRef.current = false;
+    setIsDrawing(false);
+    setStrokes(nextStrokes);
+    const roomCode = maPhongRef.current;
+    if (roomCode) saveStrokesToStorage(roomCode, nextStrokes);
+  };
+
+  useEffect(() => {
+    const handleRelease = () => finishCurrentStroke();
+    const handleVisibilityChange = () => {
+      if (document.hidden) finishCurrentStroke();
+    };
+
+    window.addEventListener('pointerup', handleRelease);
+    window.addEventListener('blur', handleRelease);
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pointerup', handleRelease);
+      window.removeEventListener('blur', handleRelease);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+  const getSavedRoomKey = (roomCode: string) => `draw_with_me_room_${roomCode}_strokes`;
 
   const rememberRoom = (roomCode: string, roomType: string) => {
     const next = { maPhong: roomCode, loaiPhong: roomType, savedAt: Date.now() };
@@ -113,8 +163,41 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
     setSavedRoom(next);
   };
 
+  const saveStrokesToStorage = (roomCode: string, strokesData: any[][]) => {
+    try {
+      localStorage.setItem(getSavedRoomKey(roomCode), JSON.stringify(strokesData));
+    } catch (err) {
+      console.error('Lỗi lưu nét vẽ:', err);
+    }
+  };
+
+  const loadStrokesFromStorage = (roomCode: string): any[][] => {
+    try {
+      const raw = localStorage.getItem(getSavedRoomKey(roomCode));
+      return raw ? JSON.parse(raw) : [];
+    } catch (err) {
+      console.error('Lỗi đọc nét vẽ:', err);
+      return [];
+    }
+  };
+
+  const redrawCanvas = (strokesData: any[][]) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    strokesData.forEach(stroke => {
+      stroke.forEach((segment: any) => {
+        drawLine(ctx, segment.x0, segment.y0, segment.x1, segment.y1, segment.color, segment.size);
+      });
+    });
+  };
+
   const forgetRoom = () => {
-    localStorage.removeItem(savedRoomKey);
+    // Preserve saved room and stroke data so the player can leave and return without losing the drawing.
     setSavedRoom(null);
   };
 
@@ -256,8 +339,8 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       setTimeLeft(data.thoiGianGiay);
       if (data.progress) setGameProgress(data.progress);
       setGameState('playing');
-      
-      // Clear local canvas
+
+      // Clear local canvas first, then restore any persisted strokes if this is a reconnect.
       setTimeout(() => {
         const canvas = canvasRef.current;
         if (canvas) {
@@ -268,10 +351,20 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
             ctx.fillRect(0, 0, canvas.width, canvas.height);
           }
         }
-      }, 50);
 
-      setStrokes([]);
-      guesserStrokes.current = [];
+        const roomCode = maPhongRef.current;
+        const persisted = roomCode ? loadStrokesFromStorage(roomCode) : [];
+
+        if (persisted.length > 0) {
+          setStrokes(persisted);
+          redrawCanvas(persisted);
+        } else {
+          setStrokes([]);
+          if (roomCode && currentLoaiPhong !== 'VeCungBan') saveStrokesToStorage(roomCode, []);
+        }
+
+        guesserStrokes.current = [];
+      }, 50);
     };
 
     const drawLine = (ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, color: string, size: number) => {
@@ -442,6 +535,15 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
     connection.invoke('ThamGiaPhong', savedRoom.maPhong, userId).catch(err => console.error(err));
   };
 
+  useEffect(() => {
+    if (!maPhong || !canvasRef.current) return;
+    const savedStrokes = loadStrokesFromStorage(maPhong);
+    if (savedStrokes.length > 0) {
+      setStrokes(savedStrokes);
+      redrawCanvas(savedStrokes);
+    }
+  }, [maPhong]);
+
   const handleSettingsChange = (next: GameSettingsState) => {
     setSettings(next);
     if (connection && maPhong && isChuPhong) {
@@ -524,14 +626,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
   };
 
   const handleMouseUp = () => {
-    if (!isDrawing || userId !== drawerId) return;
-    setIsDrawing(false);
-    if (currentStroke.current.length > 0) {
-      setStrokes(prev => [...prev, currentStroke.current]);
-    }
-    if (connection && maPhong) {
-      connection.invoke('DongBoVeGame', maPhong, JSON.stringify({ type: 'end_stroke' })).catch(err => console.error(err));
-    }
+    finishCurrentStroke();
   };
 
   const handleClear = () => {
@@ -545,6 +640,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     setStrokes([]);
+    if (maPhong) saveStrokesToStorage(maPhong, []);
     if (connection && maPhong) {
       connection.invoke('DongBoVeGame', maPhong, JSON.stringify({ type: 'clear' })).catch(err => console.error(err));
     }
@@ -555,6 +651,7 @@ export const TroChoiTamSaoThatBan: React.FC<TroChoiTamSaoThatBanProps> = ({
     const newStrokes = [...strokes];
     newStrokes.pop();
     setStrokes(newStrokes);
+    if (maPhong) saveStrokesToStorage(maPhong, newStrokes);
 
     const canvas = canvasRef.current;
     if (!canvas) return;

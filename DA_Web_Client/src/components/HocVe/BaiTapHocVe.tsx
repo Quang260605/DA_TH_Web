@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Canvas as FabricCanvas, PencilBrush, FabricObject, Path } from 'fabric';
+import { Canvas as FabricCanvas, PencilBrush, Path } from 'fabric';
 import axios from 'axios';
 import { API_URL } from '../../config';
 import confetti from 'canvas-confetti';
-import { ArrowRight, Sparkles, BookOpen, AlertCircle, Smile, CheckCircle2, Lock, Play, ArrowLeft, Trophy } from 'lucide-react';
+import { ArrowRight, Sparkles, BookOpen, AlertCircle, Smile, CheckCircle2, Play, ArrowLeft } from 'lucide-react';
 
 interface BaiTapHocVeProps {
   userId: number;
@@ -67,7 +67,7 @@ export const BaiTapHocVe: React.FC<BaiTapHocVeProps> = ({
   setAiResult
 }) => {
   const [chuDes, setChuDes] = useState<ChuDe[]>([]);
-  const [baiHocs, setBaiHocs] = useState<BaiHoc[]>([]);
+  const [_baiHocs, setBaiHocs] = useState<BaiHoc[]>([]);
   const [completedLessonIds, setCompletedLessonIds] = useState<number[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
