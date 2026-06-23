@@ -219,16 +219,27 @@ export const BaiTapHocVe: React.FC<BaiTapHocVeProps> = ({
       const fullPath = pathStrings.join(' ');
       try {
         const guidePath = new Path(fullPath, {
-          left: 100,
-          top: 80,
-          scaleX: 1.5,
-          scaleY: 1.5,
           selectable: false,
           evented: false,
           strokeDashArray: [8, 8],
           stroke: '#cbd5e1',
           fill: 'transparent',
           strokeWidth: 2
+        });
+        const pathWidth = Math.max(guidePath.width || 1, 1);
+        const pathHeight = Math.max(guidePath.height || 1, 1);
+        const scale = Math.min(
+          (canvas.getWidth() - 80) / pathWidth,
+          (canvas.getHeight() - 70) / pathHeight,
+          1.6
+        );
+        guidePath.set({
+          originX: 'center',
+          originY: 'center',
+          left: canvas.getWidth() / 2,
+          top: canvas.getHeight() / 2,
+          scaleX: scale,
+          scaleY: scale
         });
         (guidePath as any).isGuide = true;
         canvas.add(guidePath);
