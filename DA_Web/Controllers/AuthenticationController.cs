@@ -137,6 +137,44 @@ namespace DA_Web.Controllers
             return Ok(new { message = "Cập nhật mật khẩu mới thành công!" });
         }
 
+        // Cập nhật thông tin hiển thị (biệt danh & ảnh đại diện)
+        [HttpPost("update-profile")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileDto dto)
+        {
+            var user = await _context.NguoiDungs.FindAsync(dto.Id);
+            if (user == null)
+            {
+                return NotFound(new { message = "Không tìm thấy người dùng!" });
+            }
+
+            if (!string.IsNullOrEmpty(dto.TenHienThi))
+            {
+                user.TenHienThi = dto.TenHienThi;
+            }
+
+            if (!string.IsNullOrEmpty(dto.AnhDaiDienUrl))
+            {
+                user.AnhDaiDienUrl = dto.AnhDaiDienUrl;
+            }
+
+            _context.Entry(user).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Cập nhật tài khoản thành công!",
+                user = new
+                {
+                    id = user.Id,
+                    tenDangNhap = user.TenDangNhap,
+                    tenHienThi = user.TenHienThi,
+                    anhDaiDienUrl = user.AnhDaiDienUrl,
+                    tongDiem = user.TongDiem,
+                    capDoHienTai = user.CapDoHienTai
+                }
+            });
+        }
+
         // Hàm băm mật khẩu SHA256
         private string HashPassword(string password)
         {
@@ -171,5 +209,12 @@ namespace DA_Web.Controllers
     {
         public string TenDangNhap { get; set; } = string.Empty;
         public string MatKhauMoi { get; set; } = string.Empty;
+    }
+
+    public class UpdateProfileDto
+    {
+        public int Id { get; set; }
+        public string? TenHienThi { get; set; }
+        public string? AnhDaiDienUrl { get; set; }
     }
 }

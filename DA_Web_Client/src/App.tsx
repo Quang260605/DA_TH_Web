@@ -10,6 +10,14 @@ import axios from 'axios';
 
 import { BACKEND_URL } from './config';
 
+interface RoomPlayer {
+  userId: number;
+  tenHienThi: string;
+  anhDaiDienUrl: string;
+  sanSang: boolean;
+  isChuPhong?: boolean;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<'Home' | 'BangVe' | 'BaiTap' | 'Game'>('Home');
   const [user, setUser] = useState<{
@@ -35,6 +43,17 @@ function App() {
   const [currentRoomCode, setCurrentRoomCode] = useState<string | undefined>(undefined);
   const [matchType, setMatchType] = useState<'GhepNgauNhien' | 'VeCungBan' | 'TroChoiMini'>('TroChoiMini');
   const [autoStartGameRoom, setAutoStartGameRoom] = useState(false);
+  const [currentRoomType, setCurrentRoomType] = useState<'GhepNgauNhien' | 'VeCungBan' | 'TroChoiMini' | null>(null);
+  const [currentRoomPlayers, setCurrentRoomPlayers] = useState<RoomPlayer[]>([]);
+  const [currentRoomStatus, setCurrentRoomStatus] = useState<'DangCho' | 'DangChoi' | null>(null);
+
+  // States lifted for BaiTapHocVe to prevent state loss on tab change
+  const [selectedChuDe, setSelectedChuDe] = useState<any>(null);
+  const [selectedBaiHoc, setSelectedBaiHoc] = useState<any>(null);
+  const [steps, setSteps] = useState<any[]>([]);
+  const [currentStepIdx, setCurrentStepIdx] = useState<number>(0);
+  const [savedDrawingData, setSavedDrawingData] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<any>(null);
 
   const [notifications, setNotifications] = useState<{
     id: string;
@@ -97,8 +116,60 @@ function App() {
           newConnection.on('BatDauVeChung', (maPhong: string) => {
             console.log("Nhận sự kiện BatDauVeChung, mã phòng:", maPhong);
             setGameRoomCode(maPhong);
+            setCurrentRoomType('VeCungBan');
+            setCurrentRoomStatus('DangChoi');
             setDangVeId(undefined);
             setActiveTab('BangVe');
+          });
+
+          // Lắng nghe tạo phòng
+          newConnection.on('RoomCreated', (data: any) => {
+            console.log("Nhận sự kiện RoomCreated:", data);
+            setCurrentRoomType(data.loaiPhong);
+            setGameRoomCode(data.maPhong);
+            setCurrentRoomStatus(data.trangThai);
+          });
+
+          // Lắng nghe vào phòng
+          newConnection.on('RoomJoined', (data: any) => {
+            console.log("Nhận sự kiện RoomJoined:", data);
+            setCurrentRoomType(data.loaiPhong);
+            setGameRoomCode(data.maPhong);
+            setCurrentRoomStatus(data.trangThai);
+          });
+
+          // Lắng nghe cập nhật danh sách người chơi trong phòng
+          newConnection.on('CapNhatPhong', (roomCode: string, players: RoomPlayer[]) => {
+            console.log("Nhận sự kiện CapNhatPhong:", roomCode, players);
+            setGameRoomCode(roomCode);
+            setCurrentRoomPlayers(players);
+          });
+
+          // Lắng nghe người chơi khác thoát phòng
+          newConnection.on('NguoiChoiThoatPhong', (leftUserId: number) => {
+            console.log("Nhận sự kiện NguoiChoiThoatPhong:", leftUserId);
+            setCurrentRoomPlayers(prev => prev.filter(p => p.userId !== leftUserId));
+          });
+
+          // Lắng nghe bị chủ phòng kick
+          newConnection.on('BiKickKhoiPhong', () => {
+            console.log("Nhận sự kiện BiKickKhoiPhong");
+            setGameRoomCode(undefined);
+            setCurrentRoomPlayers([]);
+            setCurrentRoomType(null);
+            setCurrentRoomStatus(null);
+            setActiveTab('Home');
+          });
+
+          // Lắng nghe phòng bị hủy dọc đường (mất kết nối)
+          newConnection.on('GameBiHuyDocDuong', (uId: number, message: string) => {
+            console.log("Nhận sự kiện GameBiHuyDocDuong:", message);
+            alert(message);
+            setGameRoomCode(undefined);
+            setCurrentRoomPlayers([]);
+            setCurrentRoomType(null);
+            setCurrentRoomStatus(null);
+            setActiveTab('Home');
           });
         })
         .catch(err => console.error("Lỗi kết nối SignalR Hub:", err));
@@ -108,17 +179,28 @@ function App() {
           newConnection.off('NhanLoiMoiVaoPhong');
           newConnection.off('NhanLoiMoiVeChung');
           newConnection.off('BatDauVeChung');
+          newConnection.off('RoomCreated');
+          newConnection.off('RoomJoined');
+          newConnection.off('CapNhatPhong');
+          newConnection.off('NguoiChoiThoatPhong');
+          newConnection.off('BiKickKhoiPhong');
+          newConnection.off('GameBiHuyDocDuong');
           newConnection.stop();
         }
       };
     }
   }, [isLoggedIn, user?.id]);
- 
+
   // Quản lý việc thoát phòng khi gameRoomCode thay đổi hoặc bị xóa
   useEffect(() => {
     if (currentRoomCode && currentRoomCode !== gameRoomCode && connection && user) {
       connection.invoke('ThoatPhong', currentRoomCode, user.id)
         .catch(err => console.error("Lỗi tự động thoát phòng cũ:", err));
+      if (!gameRoomCode) {
+        setCurrentRoomPlayers([]);
+        setCurrentRoomType(null);
+        setCurrentRoomStatus(null);
+      }
     }
     setCurrentRoomCode(gameRoomCode);
   }, [gameRoomCode, connection, user?.id]);
@@ -222,9 +304,19 @@ function App() {
     setGameRoomCode(undefined); // Để TroChoi tự sinh hoặc ghép phòng
   };
 
+  const handleJoinRoomById = (maPhong: string) => {
+    setGameRoomCode(maPhong);
+    setAutoStartGameRoom(false);
+    setActiveTab('Game');
+  };
+
   const handleLogout = () => {
     setIsLoggedIn(false);
     setUser(null);
+    setGameRoomCode(undefined);
+    setCurrentRoomType(null);
+    setCurrentRoomPlayers([]);
+    setCurrentRoomStatus(null);
     if (connection) {
       connection.stop();
       setConnection(null);
@@ -548,6 +640,159 @@ function App() {
     );
   }
 
+  const renderFloatingCollabWidget = () => {
+    // Chỉ hiển thị khi có phòng hoạt động và người dùng đã trong phòng
+    if (!gameRoomCode || !currentRoomType) return null;
+
+    // Không hiển thị widget khi đang ở tab Game vì giao diện game/phòng chờ đã có sẵn thông tin
+    if (activeTab === 'Game') return null;
+
+    const otherPlayers = currentRoomPlayers.filter(p => p.userId !== user?.id);
+    if (otherPlayers.length === 0) return null;
+
+    // Dynamic title based on room type
+    const titleText = currentRoomType === 'VeCungBan' 
+      ? '🎨 Vẽ cùng bạn bè' 
+      : currentRoomType === 'GhepNgauNhien' 
+        ? '🎮 Ghép ngẫu nhiên' 
+        : '🧩 Phòng game';
+
+    return (
+      <div style={{
+        position: 'fixed',
+        bottom: '20px',
+        left: '20px',
+        zIndex: 9999,
+        fontFamily: 'var(--font-kids)',
+        pointerEvents: 'auto'
+      }}>
+        <div className="bubble-card" style={{
+          padding: '16px 20px',
+          background: 'white',
+          border: '4px solid #2c3e50',
+          boxShadow: '0 8px 0 #2c3e50, 0 10px 25px rgba(0,0,0,0.1)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          minWidth: '280px',
+          transition: 'all 0.3s ease'
+        }}>
+          {/* Header row */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderBottom: '2px dashed #cbd5e1',
+            paddingBottom: '8px'
+          }}>
+            <span style={{ fontWeight: 'bold', fontSize: '1rem', color: '#2c3e50', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {titleText}
+            </span>
+            <span style={{
+              background: '#e2e8f0',
+              padding: '2px 8px',
+              borderRadius: '8px',
+              fontSize: '0.75rem',
+              fontWeight: 'bold',
+              color: '#475569'
+            }}>
+              Phòng: {gameRoomCode}
+            </span>
+          </div>
+
+          {/* User info row - Scrollable player list */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            maxHeight: '150px',
+            overflowY: 'auto',
+            paddingRight: '4px'
+          }}>
+            {otherPlayers.map(p => (
+              <div key={p.userId} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                background: '#f8fafc',
+                padding: '6px 12px',
+                borderRadius: '12px',
+                border: '2px solid #e2e8f0'
+              }}>
+                <img
+                  src={p.anhDaiDienUrl || '/assets/avatars/avatar_bo.png'}
+                  alt={p.tenHienThi}
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    border: '2px solid #2c3e50'
+                  }}
+                />
+                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#2c3e50' }}>
+                  {p.tenHienThi}
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#22c55e', fontWeight: 'bold' }}>
+                  🟢 Online
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Actions row */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+            {activeTab !== 'BangVe' && (
+              <button
+                onClick={() => {
+                  if (currentRoomType === 'VeCungBan' && currentRoomStatus === 'DangChoi') {
+                    setActiveTab('BangVe');
+                  } else {
+                    setActiveTab('Game');
+                  }
+                }}
+                className="btn-bubble btn-green hover-bounce"
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: 'bold',
+                  justifyContent: 'center',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                {currentRoomType === 'VeCungBan' && currentRoomStatus === 'DangChoi' ? 'Quay lại vẽ' : 'Quay lại phòng'}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                if (window.confirm("Bạn có chắc chắn muốn rời phòng game/vẽ không?")) {
+                  setGameRoomCode(undefined);
+                  setCurrentRoomPlayers([]);
+                  setCurrentRoomType(null);
+                  setCurrentRoomStatus(null);
+                  setActiveTab('Home');
+                }
+              }}
+              className="btn-bubble btn-pink hover-bounce"
+              style={{
+                flex: activeTab === 'BangVe' ? 1 : 'none',
+                padding: '8px 12px',
+                fontSize: '0.85rem',
+                fontWeight: 'bold',
+                justifyContent: 'center',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              Rời phòng
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ======================= GIAO DIỆN CHÍNH SAU KHI ĐĂNG NHẬP =======================
   return (
     <div className="app-container">
@@ -771,7 +1016,9 @@ function App() {
               onClick={() => {
                 setActiveTab('Game');
                 setAutoStartGameRoom(false);
-                setGameRoomCode(undefined);
+                if (!currentRoomType) {
+                  setGameRoomCode(undefined);
+                }
               }}
               style={{
                 background: activeTab === 'Game' ? 'var(--color-accent)' : 'none',
@@ -809,7 +1056,12 @@ function App() {
         {/* Nội dung thay đổi theo Tab */}
         <div style={{ width: '100%', maxWidth: '900px' }}>
           {activeTab === 'Home' && (
-            <TrangChu user={user} onStartMatching={handleStartMatching} />
+            <TrangChu 
+              user={user} 
+              onStartMatching={handleStartMatching} 
+              onJoinRoomById={handleJoinRoomById}
+              onProfileUpdate={(updatedUser) => setUser(updatedUser)}
+            />
           )}
 
           {activeTab === 'BangVe' && (
@@ -819,14 +1071,33 @@ function App() {
               maPhongVect={gameRoomCode}
               banVeId={dangVeId} 
               onClose={() => {
-                setGameRoomCode(undefined);
+                if (currentRoomType !== 'VeCungBan') {
+                  setGameRoomCode(undefined);
+                  setCurrentRoomStatus(null);
+                }
                 setActiveTab('Home');
               }} 
             />
           )}
 
           {activeTab === 'BaiTap' && (
-            <BaiTapHocVe userId={user.id} onUserUpdate={handleUserUpdate} onClose={() => setActiveTab('Home')} />
+            <BaiTapHocVe 
+              userId={user.id} 
+              onUserUpdate={handleUserUpdate} 
+              onClose={() => setActiveTab('Home')} 
+              selectedChuDe={selectedChuDe}
+              setSelectedChuDe={setSelectedChuDe}
+              selectedBaiHoc={selectedBaiHoc}
+              setSelectedBaiHoc={setSelectedBaiHoc}
+              steps={steps}
+              setSteps={setSteps}
+              currentStepIdx={currentStepIdx}
+              setCurrentStepIdx={setCurrentStepIdx}
+              savedDrawingData={savedDrawingData}
+              setSavedDrawingData={setSavedDrawingData}
+              aiResult={aiResult}
+              setAiResult={setAiResult}
+            />
           )}
 
           {activeTab === 'Game' && (
@@ -845,6 +1116,7 @@ function App() {
           )}
         </div>
       </div>
+      {renderFloatingCollabWidget()}
     </div>
   );
 }

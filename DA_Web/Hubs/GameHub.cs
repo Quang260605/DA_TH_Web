@@ -326,7 +326,7 @@ namespace DA_Web.Hubs
             var daTrongPhong = await _context.NguoiChoiTrongPhongs
                 .AnyAsync(rp => rp.PhongChoId == phong.Id && rp.NguoiDungId == userId);
 
-            if (phong.TrangThai == "DangChoi" && !daTrongPhong)
+            if (phong.TrangThai == "DangChoi" && !daTrongPhong && phong.LoaiPhong != "VeCungBan")
             {
                 await Clients.Caller.SendAsync("LoiPhong", "Phòng đã bắt đầu chơi, bạn không thể tham gia mới.");
                 return;
@@ -385,6 +385,26 @@ namespace DA_Web.Hubs
                 trangThai = phong.TrangThai,
                 settings = settings
             });
+
+            // Nếu phòng vẽ cùng bạn bè đã bắt đầu chơi, gửi sự kiện bắt đầu vẽ chung trực tiếp cho người vừa quay lại
+            if (phong.TrangThai == "DangChoi" && phong.LoaiPhong == "VeCungBan")
+            {
+                await Clients.Caller.SendAsync("BatDauVeChung", maPhong);
+            }
+        }
+
+        // Kiểm tra xem phòng cũ còn hoạt động (còn người chơi khác ở trong phòng) hay không
+        public async Task<bool> KiemTraPhongConHoatDong(string maPhong)
+        {
+            if (string.IsNullOrWhiteSpace(maPhong)) return false;
+            maPhong = maPhong.Trim().ToUpperInvariant();
+
+            var phong = await _context.PhongChos
+                .FirstOrDefaultAsync(p => p.MaPhong == maPhong && p.TrangThai != "DaKetThuc");
+            if (phong == null) return false;
+
+            var count = await _context.NguoiChoiTrongPhongs.CountAsync(rp => rp.PhongChoId == phong.Id);
+            return count > 0;
         }
 
         public async Task CapNhatCaiDatPhong(string maPhong, int tongSoVong, int thoiGianVeGiay)
@@ -1046,6 +1066,9 @@ namespace DA_Web.Hubs
                 }
                 RoomSettings.TryRemove(state.MaPhong, out _);
 
+                // Bỏ qua cộng điểm từ game vào cơ sở dữ liệu.
+                // Điểm trên BXH chỉ được tích lũy khi làm bài tập vẽ.
+                /*
                 foreach (var kv in state.TotalScores)
                 {
                     var user = await context.NguoiDungs.FindAsync(kv.Key);
@@ -1057,6 +1080,7 @@ namespace DA_Web.Hubs
                     }
                 }
                 await context.SaveChangesAsync();
+                */
 
                 var finalLeaderboard = new List<object>();
                 foreach (var pId in state.PlayerQueue)
