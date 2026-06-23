@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Canvas as FabricCanvas, PencilBrush, Path } from 'fabric';
+import { Canvas as FabricCanvas, Group, PencilBrush, Path } from 'fabric';
 import axios from 'axios';
 import { API_URL } from '../../config';
 import confetti from 'canvas-confetti';
@@ -204,46 +204,66 @@ export const BaiTapHocVe: React.FC<BaiTapHocVeProps> = ({
   useEffect(() => {
     if (!canvas || steps.length === 0) return;
 
-    // Lọc bước hiện tại
-    const currentStep = steps[currentStepIdx];
-    
+    // Lấy toàn bộ nét hướng dẫn để luôn có bản phác tổng thể trên canvas
+    const stepsWithGuide = steps.filter((step) => step.duLieuGuideSvg?.trim());
+
     // Xóa tất cả các đối tượng mẫu nét đứt cũ (nếu có)
     const oldGuides = canvas.getObjects().filter((obj: any) => (obj as any).isGuide);
     oldGuides.forEach((obj: any) => canvas.remove(obj));
 
     // Vẽ nét vẽ mẫu nếu có dữ liệu SVG path
-    if (currentStep.duLieuGuideSvg) {
-      // Tạo trực tiếp Path objects từ SVG path data (Fabric.js v7 compatible)
-      const pathStrings = currentStep.duLieuGuideSvg.split(/(?=M)/g).filter((s: string) => s.trim());
-      // Gộp lại thành 1 path duy nhất
-      const fullPath = pathStrings.join(' ');
+    if (stepsWithGuide.length > 0) {
+      const allGuidePath = stepsWithGuide.map((step) => step.duLieuGuideSvg).join(' ');
+      const guideObjects: Path[] = [];
       try {
-        const guidePath = new Path(fullPath, {
+        const previewPath = new Path(allGuidePath, {
           selectable: false,
           evented: false,
-          strokeDashArray: [8, 8],
-          stroke: '#cbd5e1',
+          stroke: '#dbe4ef',
           fill: 'transparent',
-          strokeWidth: 2
+          strokeWidth: 2,
+          opacity: 0.42
         });
-        const pathWidth = Math.max(guidePath.width || 1, 1);
-        const pathHeight = Math.max(guidePath.height || 1, 1);
+        guideObjects.push(previewPath);
+
+        steps.forEach((step, index) => {
+          if (!step.duLieuGuideSvg?.trim() || index > currentStepIdx) return;
+
+          const isCurrentStep = index === currentStepIdx || !steps[currentStepIdx]?.duLieuGuideSvg?.trim();
+          const stepPath = new Path(step.duLieuGuideSvg, {
+            selectable: false,
+            evented: false,
+            strokeDashArray: isCurrentStep ? [10, 7] : [5, 9],
+            stroke: isCurrentStep ? '#ff5c7a' : '#a8b8ca',
+            fill: 'transparent',
+            strokeWidth: isCurrentStep ? 3.2 : 2.2,
+            opacity: isCurrentStep ? 0.95 : 0.72
+          });
+          guideObjects.push(stepPath);
+        });
+
+        const guideGroup = new Group(guideObjects, {
+          selectable: false,
+          evented: false,
+          originX: 'center',
+          originY: 'center'
+        });
+        const pathWidth = Math.max(guideGroup.width || 1, 1);
+        const pathHeight = Math.max(guideGroup.height || 1, 1);
         const scale = Math.min(
           (canvas.getWidth() - 80) / pathWidth,
           (canvas.getHeight() - 70) / pathHeight,
           1.6
         );
-        guidePath.set({
-          originX: 'center',
-          originY: 'center',
+        guideGroup.set({
           left: canvas.getWidth() / 2,
           top: canvas.getHeight() / 2,
           scaleX: scale,
           scaleY: scale
         });
-        (guidePath as any).isGuide = true;
-        canvas.add(guidePath);
-        canvas.sendObjectToBack(guidePath);
+        (guideGroup as any).isGuide = true;
+        canvas.add(guideGroup);
+        canvas.sendObjectToBack(guideGroup);
         canvas.renderAll();
       } catch (err) {
         console.warn("Không thể vẽ nét hướng dẫn:", err);
