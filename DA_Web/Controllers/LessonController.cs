@@ -150,9 +150,10 @@ namespace DA_Web.Controllers
             user.CapDoHienTai = (user.TongDiem / 100) + 1;
             _context.Entry(user).State = EntityState.Modified;
 
-            // 4. Kiểm tra điều kiện mở khóa huy hiệu
-            await KiemTraHuyHieu(user.Id);
+            await _context.SaveChangesAsync();
 
+            // 4. Kiểm tra điều kiện mở khóa huy hiệu sau khi tiến trình đã được lưu
+            await KiemTraHuyHieu(user.Id);
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -171,7 +172,10 @@ namespace DA_Web.Controllers
             // Định nghĩa điều kiện đạt huy hiệu
             // Huy hiệu 1: Thần đồng hình học (Hoàn thành bài tập vẽ Donut)
             bool daHoanThanhDonut = await _context.TienTrinhNguoiDungs
-                .AnyAsync(p => p.NguoiDungId == userId && p.BaiHocId == 3 && p.TrangThai == "DaHoanThanh");
+                .AnyAsync(p => p.NguoiDungId == userId
+                    && p.TrangThai == "DaHoanThanh"
+                    && p.BaiHoc != null
+                    && p.BaiHoc.TieuDe.Contains("Donut"));
 
             if (daHoanThanhDonut)
             {
@@ -180,7 +184,10 @@ namespace DA_Web.Controllers
 
             // Huy hiệu 2: Bạn của động vật (Hoàn thành bài tập vẽ Chú mèo con)
             bool daHoanThanhMeoCon = await _context.TienTrinhNguoiDungs
-                .AnyAsync(p => p.NguoiDungId == userId && p.BaiHocId == 1 && p.TrangThai == "DaHoanThanh");
+                .AnyAsync(p => p.NguoiDungId == userId
+                    && p.TrangThai == "DaHoanThanh"
+                    && p.BaiHoc != null
+                    && p.BaiHoc.TieuDe.Contains("mèo"));
 
             if (daHoanThanhMeoCon)
             {
@@ -191,29 +198,30 @@ namespace DA_Web.Controllers
         private async Task TraoHuyHieuNeuChuaCo(int userId, int badgeId, string tieuDe, string moTa, string iconUrl)
         {
             // Kiểm tra HuyHieu đã tồn tại trong DB chưa, nếu chưa thì thêm mới
-            var badge = await _context.HuyHieus.FindAsync(badgeId);
+            var badge = await _context.HuyHieus
+                .FirstOrDefaultAsync(b => b.Id == badgeId || b.TieuDe == tieuDe);
+
             if (badge == null)
             {
                 badge = new HuyHieu
                 {
-                    Id = badgeId,
                     TieuDe = tieuDe,
                     MoTa = moTa,
                     HinhAnhUrl = iconUrl
                 };
                 _context.HuyHieus.Add(badge);
-                // Bật identity insert tạm thời nếu cần, nhưng EF Core xử lý ID thủ công nếu đã được cấu hình đúng
+                await _context.SaveChangesAsync();
             }
 
             bool daCo = await _context.HuyHieuNguoiDungs
-                .AnyAsync(ub => ub.NguoiDungId == userId && ub.HuyHieuId == badgeId);
+                .AnyAsync(ub => ub.NguoiDungId == userId && ub.HuyHieuId == badge.Id);
 
             if (!daCo)
             {
                 var userBadge = new HuyHieuNguoiDung
                 {
                     NguoiDungId = userId,
-                    HuyHieuId = badgeId,
+                    HuyHieuId = badge.Id,
                     NgayNhan = DateTime.Now
                 };
                 _context.HuyHieuNguoiDungs.Add(userBadge);

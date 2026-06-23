@@ -1,0 +1,7 @@
+USE [master];
+GO
+
+RESTORE DATABASE [DrawWithMeDb]
+FROM DISK = N'DUONG_DAN_TOI_FILE\DrawWithMeDb.bak'
+WITH REPLACE;
+GO

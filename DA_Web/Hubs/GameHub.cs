@@ -156,7 +156,7 @@ namespace DA_Web.Hubs
 
         // ======================= MODULE 4: PHÒNG CHỜ & GHÉP TRẬN =======================
 
-        private async Task RemoveUserFromAllRooms(int userId, string excludeMaPhong = null)
+        private async Task RemoveUserFromAllRooms(int userId, string? excludeMaPhong = null)
         {
             var oldRooms = await _context.NguoiChoiTrongPhongs
                 .Include(rp => rp.PhongCho)
@@ -169,7 +169,7 @@ namespace DA_Web.Hubs
                 _context.NguoiChoiTrongPhongs.Remove(player);
                 await _context.SaveChangesAsync();
 
-                if (UserToConnection.TryGetValue(userId, out string connId))
+                if (UserToConnection.TryGetValue(userId, out string? connId))
                 {
                     await Groups.RemoveFromGroupAsync(connId, $"Room_{room.MaPhong}");
                 }
@@ -221,7 +221,7 @@ namespace DA_Web.Hubs
                 _context.NguoiChoiTrongPhongs.Remove(targetPlayer);
                 await _context.SaveChangesAsync();
 
-                if (UserToConnection.TryGetValue(targetUserId, out string targetConnId))
+                if (UserToConnection.TryGetValue(targetUserId, out string? targetConnId))
                 {
                     await Groups.RemoveFromGroupAsync(targetConnId, $"Room_{maPhong}");
                     await Clients.Client(targetConnId).SendAsync("BiKickKhoiPhong");
